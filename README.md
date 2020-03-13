@@ -11,7 +11,6 @@ For Language and Intelligence Chanllenge task 5: [Event Extraction](https://aist
 
 Record all discussions in [Disccusion.md](./Disccusion.md)
 
-
 ## Papers & References
 
 List all papers or References [here](./Reference.md) with fixed format.

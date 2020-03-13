@@ -4,7 +4,7 @@
 
 ### Fields of papers
 
-**P1**: Text classificcation & Semantic role labling  
+**P1**: Text classificcation/aggregation & Semantic role labling  
 **P2**: Data cleaning & Data augmentation  
 **P3**: Model Compression/Acceleration: KD, Pruning, Quantification
 
