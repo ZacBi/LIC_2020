@@ -4,10 +4,16 @@ For Language and Intelligence Chanllenge task 5: [Event Extraction](https://aist
 
 ## Pipeline
 
-1. Create your branch and develop in it.
+1. Create your branch and develop in it.  
 2. Discussion and code review before merge.
 
-## Papers & References
+## Discussion & Reference
 
-List all papers or References here with fixed format.
-Add papers and references into branch 'refer'.
+Discussion: [issue2](https://github.com/ZacBi/LIC_2020/issues/2)
+Reference: [issue3](https://github.com/ZacBi/LIC_2020/issues/3)
+
+## FYI
+
+1. Think about using **continous integration** while developing(github->action)  
+2. Consider python package (wheel or .egg) for using some common utils(F-measure or others), For more info: [link](www.pythonwheels.com/)  
+3. Use [Click](https://click.palletsprojects.com/en/7.x/) instead of python build-in Argparse for command develop.
