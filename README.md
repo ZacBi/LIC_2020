@@ -10,4 +10,3 @@ For Language and Intelligence Chanllenge task 5: [Event Extraction](https://aist
 ## Papers & References
 
 List all papers or References here with fixed format.
-Add papers and references into branch 'refer'.
