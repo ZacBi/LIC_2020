@@ -9,7 +9,7 @@ from untils import collate_fn
 
 def train(args, logger, tokenizer, model, train_data, test_data):
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-    loader = Data.DataLoader(dataset=train_data,batch_size=args.train_batch_size,shuffle=False,collate_fn=collate_fn)
+    loader = Data.DataLoader(dataset=train_data,batch_size=args.train_batch_size,shuffle=True,collate_fn=collate_fn)
     best_P = 0
     num_stop_train = args.num_stop_train
     for epoch in range(args.num_train_epochs):
