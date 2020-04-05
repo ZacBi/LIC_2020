@@ -9,7 +9,9 @@ from trainer import train
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_file", default="data/sample_data.json", type=str, help=None)
+    parser.add_argument("--train_file", default="data/train.json", type=str, help=None)
+    parser.add_argument("--dev_file", default="data/dev.json", type=str, help=None)
+    parser.add_argument("--test_file", default="data/test.json", type=str, help=None)
     parser.add_argument("--pretrained_model", default="bert-base-chinese", type=str, help=None)
     parser.add_argument("--learning_rate", default=5e-5, type=float, help=None)
     parser.add_argument("--train_batch_size", default=4, type=int, help=None)
