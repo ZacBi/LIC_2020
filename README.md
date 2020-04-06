@@ -32,4 +32,7 @@ sh env.sh
 source activate torch
 conda install --yes --file requirements_conda.txt
 pip install -r requirements_pip.txt
+
+# Install package
+pip install -e ./ --no-binary :all:
 ```
