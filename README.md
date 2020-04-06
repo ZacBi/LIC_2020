@@ -17,3 +17,20 @@ Reference: [issue3](https://github.com/ZacBi/LIC_2020/issues/3)
 1. Think about using **continous integration** while developing(github->action)  
 2. Consider python package (wheel or .egg) for using some common utils(F-measure or others), For more info: [link](www.pythonwheels.com/)  
 3. Use [Click](https://click.palletsprojects.com/en/7.x/) instead of python build-in Argparse for command develop.
+
+------
+
+## Pipeline in Paddle env
+
+```sh
+# Clone repo
+git clone git@github.com:ZacBi/LIC_2020.git
+cd ./LIC_2020
+git checkout ner_crf
+
+# Conda env
+sh env.sh
+source activate torch
+conda install --yes --file requirements_dev.txt
+```
+
