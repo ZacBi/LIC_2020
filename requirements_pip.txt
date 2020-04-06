@@ -1,0 +1,5 @@
+# pip
+pur==5.2.2
+transformers==2.8.0
+pytorch-transformers==1.2.0
+twine==1.14.0

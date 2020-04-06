@@ -24,13 +24,12 @@ Reference: [issue3](https://github.com/ZacBi/LIC_2020/issues/3)
 
 ```sh
 # Clone repo
-git clone git@github.com:ZacBi/LIC_2020.git
+git clone -b ner_crf https://github.com/ZacBi/LIC_2020.git
 cd ./LIC_2020
-git checkout ner_crf
 
 # Conda env
 sh env.sh
 source activate torch
-conda install --yes --file requirements_dev.txt
+conda install --yes --file requirements_conda.txt
+pip install -r requirements_pip.txt
 ```
-
