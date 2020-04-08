@@ -1,3 +1,0 @@
-# pip
-transformers==2.7.0
-torchtext==0.5.0

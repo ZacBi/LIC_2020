@@ -99,7 +99,8 @@ class CRF(nn.Module):
         assert reduction == 'token_mean'
         return llh.sum() / mask.type_as(emissions).sum()
 
-    def decode(self, emissions: torch.Tensor,
+    def decode(self,
+               emissions: torch.Tensor,
                mask: Optional[torch.ByteTensor] = None) -> List[List[int]]:
         """Find the most likely tag sequence using Viterbi algorithm.
 
@@ -123,13 +124,13 @@ class CRF(nn.Module):
 
         return self._viterbi_decode(emissions, mask)
 
-    def _validate(
-            self,
-            emissions: torch.Tensor,
-            tags: Optional[torch.LongTensor] = None,
-            mask: Optional[torch.ByteTensor] = None) -> None:
+    def _validate(self,
+                  emissions: torch.Tensor,
+                  tags: Optional[torch.LongTensor] = None,
+                  mask: Optional[torch.ByteTensor] = None) -> None:
         if emissions.dim() != 3:
-            raise ValueError(f'emissions must have dimension of 3, got {emissions.dim()}')
+            raise ValueError(
+                f'emissions must have dimension of 3, got {emissions.dim()}')
         if emissions.size(2) != self.num_tags:
             raise ValueError(
                 f'expected last dimension of emissions is {self.num_tags}, '
@@ -140,21 +141,22 @@ class CRF(nn.Module):
             if emissions.shape[:2] != tags.shape:
                 raise ValueError(
                     'the first two dimensions of emissions and tags must match, '
-                    f'got {tuple(emissions.shape[:2])} and {tuple(tags.shape)}')
+                    f'got {tuple(emissions.shape[:2])} and {tuple(tags.shape)}'
+                )
         # TODO: what does mask do?
         if mask is not None:
             if emissions.shape[:2] != mask.shape:
                 raise ValueError(
                     'the first two dimensions of emissions and mask must match, '
-                    f'got {tuple(emissions.shape[:2])} and {tuple(mask.shape)}')
+                    f'got {tuple(emissions.shape[:2])} and {tuple(mask.shape)}'
+                )
             no_empty_seq = not self.batch_first and mask[0].all()
             no_empty_seq_bf = self.batch_first and mask[:, 0].all()
             if not no_empty_seq and not no_empty_seq_bf:
                 raise ValueError('mask of the first timestep must all be on')
 
-    def _compute_score(
-            self, emissions: torch.Tensor, tags: torch.LongTensor,
-            mask: torch.ByteTensor) -> torch.Tensor:
+    def _compute_score(self, emissions: torch.Tensor, tags: torch.LongTensor,
+                       mask: torch.ByteTensor) -> torch.Tensor:
         # emissions: (seq_length, batch_size, num_tags)
         # tags: (seq_length, batch_size)
         # mask: (seq_length, batch_size)
@@ -193,8 +195,8 @@ class CRF(nn.Module):
 
         return score
 
-    def _compute_normalizer(
-            self, emissions: torch.Tensor, mask: torch.ByteTensor) -> torch.Tensor:
+    def _compute_normalizer(self, emissions: torch.Tensor,
+                            mask: torch.ByteTensor) -> torch.Tensor:
         # emissions: (seq_length, batch_size, num_tags)
         # mask: (seq_length, batch_size)
         assert emissions.dim() == 3 and mask.dim() == 2

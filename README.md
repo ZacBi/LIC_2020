@@ -30,8 +30,7 @@ cd ./LIC_2020
 # Conda env
 sh env.sh
 source activate torch
-conda install --yes --file requirements_conda.txt
-pip install -r requirements_pip.txt
+conda install --yes --file requirements.txt
 
 # Install package
 pip install -e ./ --no-binary :all:
