@@ -26,3 +26,4 @@ ipython==7.9.0
 # DL.
 pytorch=1.4.0
 cudatoolkit=9.2     # Compatible with Paddlepaddle env
+transformers==2.7.0
