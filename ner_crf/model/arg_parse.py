@@ -16,7 +16,7 @@ def get_args(model_types: List[str], all_models: List[str]):
         type=str,
         required=True,
         help=
-        "The input data dir. Should contain the training files for the CoNLL-2003 NER task.",
+        "The input data dir. Should contain the training files for the DuEE task.",
     )
     parser.add_argument(
         "--model_type",
@@ -48,7 +48,8 @@ def get_args(model_types: List[str], all_models: List[str]):
         default="",
         type=str,
         help=
-        "Path to a file containing all labels. If not specified, CoNLL-2003 labels are used.",
+        "Path to a file containing all labels. "
+        "If not specified, DuEE labels are used.",
     )
     parser.add_argument(
         "--config_name",
@@ -73,8 +74,8 @@ def get_args(model_types: List[str], all_models: List[str]):
         default=128,
         type=int,
         help=
-        "The maximum total input sequence length after tokenization. Sequences longer "
-        "than this will be truncated, sequences shorter will be padded.",
+        "The maximum total input sequence length after tokenization. "
+        "Sequences longer than this will be truncated, sequences shorter will be padded.",
     )
     parser.add_argument("--do_train",
                         action="store_true",
@@ -149,6 +150,7 @@ def get_args(model_types: List[str], all_models: List[str]):
         help=
         "If > 0: set total number of training steps to perform. Override num_train_epochs.",
     )
+    # TODO: how to set warmup steps?
     parser.add_argument("--warmup_steps",
                         default=0,
                         type=int,

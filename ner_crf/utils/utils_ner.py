@@ -32,14 +32,18 @@ class InputFeatures(object):
 
 
 def read_examples_from_file(data_dir, mode):
-    file_path = os.path.join(data_dir, "{}.txt".format(mode))
+    file_path = os.path.join(data_dir, f"{mode}.txt")
     guid_index = 1
     examples = []
-    with open(file_path, encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f_obj:
         words = []
         labels = []
-        for line in f:
+        # line example:
+        # l1: EU NNP I-NP I-ORG
+        # l2: rejects VBZ I-VP O
+        for line in f_obj:
             if line.startswith("-DOCSTART-") or line == "" or line == "\n":
+                # A sentence has finished and create a `InputExample` for this sentence
                 if words:
                     examples.append(
                         InputExample(guid="{}-{}".format(mode, guid_index),
@@ -56,6 +60,7 @@ def read_examples_from_file(data_dir, mode):
                 else:
                     # Examples could have no label for mode = "test"
                     labels.append("O")
+        # The last sentences must be processed.
         if words:
             examples.append(
                 InputExample(guid="{}-{}".format(mode, guid_index),
@@ -87,7 +92,8 @@ def convert_examples_to_features(
             - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
         `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
     """
-
+    # TODO: change the method for create `label_map`, it's dangerous operation here.
+    # Condsider use a `vocab_label_map.txt` instead for robustness.
     label_map = {label: i for i, label in enumerate(label_list)}
 
     features = []
@@ -97,16 +103,20 @@ def convert_examples_to_features(
 
         tokens = []
         label_ids = []
+        # NOTE: Core operation for link label and tokenized word.
         for word, label in zip(example.words, example.labels):
             word_tokens = tokenizer.tokenize(word)
 
-            # bert-base-multilingual-cased sometimes output "nothing ([]) when calling tokenize with just a space.
-            if len(word_tokens) > 0:
+            # bert-base-multilingual-cased sometimes output
+            # "nothing ([]) when calling tokenize with just a space.
+            if word_tokens:
                 tokens.extend(word_tokens)
-                # Use the real label id for the first token of the word, and padding ids for the remaining tokens
+                # Use the real label id for the first token of the word,
+                # and padding ids for the remaining tokens
                 label_ids.extend([label_map[label]] + [pad_token_label_id] *
                                  (len(word_tokens) - 1))
 
+        # TODO: use tokenizer.truncate() instead
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
         special_tokens_count = tokenizer.num_added_tokens()
         if len(tokens) > max_seq_length - special_tokens_count:

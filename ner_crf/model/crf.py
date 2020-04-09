@@ -1,12 +1,12 @@
 from typing import List, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class CRF(nn.Module):
     """Conditional random field.
-    
+
     Args:
         num_tags: Number of tags.
         batch_first: Whether the first dimension corresponds to the size of a minibatch.
