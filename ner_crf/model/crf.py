@@ -30,9 +30,9 @@ class CRF(nn.Module):
         self.end_transitions = nn.Parameter(torch.empty(num_tags))
         self.transitions = nn.Parameter(torch.empty(num_tags, num_tags))
 
-        self.reset_parameters()
+        self.init_parameters()
 
-    def reset_parameters(self) -> None:
+    def init_parameters(self) -> None:
         """Initialize the transition parameters.
 
         The parameters will be initialized randomly from a uniform distribution

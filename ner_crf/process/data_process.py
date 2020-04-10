@@ -68,7 +68,7 @@ def schema_role_process(schema_path=None, save_path=None):
 
 
 def origin_events_process(
-    origin_events_path=None,
+    origin_events_path=None,    
     save_dir=None,
     split_data=False,
     alias='',
