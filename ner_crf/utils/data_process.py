@@ -114,6 +114,7 @@ def run(func_name=None):
         "schema_event_type_process": schema_event_type_process,
         "schema_role_process": schema_role_process
     }
+    func_name = sys.argv[1]
     if func_name not in func_mapping:
         raise Exception("no function {}, please select [ {} ]".format(
             func_name, u" | ".join(func_mapping.keys())))
