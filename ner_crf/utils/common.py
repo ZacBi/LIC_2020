@@ -1,15 +1,17 @@
 import os
 import random
-import torch
-import numpy as np
 import json
 import pickle
-import torch.nn as nn
 from collections import OrderedDict
-from pathlib import Path
 import logging
+from pathlib import Path
+import numpy as np
+import torch
+from torch import nn
 
 logger = logging.getLogger()
+
+
 def print_config(config):
     info = "Running with the following configs:\n"
     for k, v in config.items():
@@ -17,18 +19,19 @@ def print_config(config):
     print("\n" + info + "\n")
     return
 
+
 def init_logger(log_file=None, log_file_level=logging.NOTSET):
     '''
     Example:
         >>> init_logger(log_file)
         >>> logger.info("abc'")
     '''
-    if isinstance(log_file,Path):
+    if isinstance(log_file, Path):
         log_file = str(log_file)
-    log_format = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                                   datefmt='%m/%d/%Y %H:%M:%S')
+    log_format = logging.Formatter(
+        fmt='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+        datefmt='%m/%d/%Y %H:%M:%S')
 
-    logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(log_format)
@@ -39,6 +42,7 @@ def init_logger(log_file=None, log_file_level=logging.NOTSET):
         # file_handler.setFormatter(log_format)
         logger.addHandler(file_handler)
     return logger
+
 
 def seed_everything(seed=1029):
     '''
@@ -71,7 +75,9 @@ def prepare_device(n_gpu_use):
         device_type = f"cuda:{n_gpu_use[0]}"
     n_gpu = torch.cuda.device_count()
     if len(n_gpu_use) > 0 and n_gpu == 0:
-        logger.warning("Warning: There\'s no GPU available on this machine, training will be performed on CPU.")
+        logger.warning(
+            "Warning: There\'s no GPU available on this machine, training will be performed on CPU."
+        )
         device_type = 'cpu'
     if len(n_gpu_use) > n_gpu:
         msg = f"Warning: The number of GPU\'s configured to use is {n_gpu_use}, but only {n_gpu} are available on this machine."
@@ -92,7 +98,7 @@ def model_device(n_gpu, model):
     '''
     device, device_ids = prepare_device(n_gpu)
     if len(device_ids) > 1:
-        logger.info(f"current {len(device_ids)} GPUs")
+        logger.info("current %d GPUs", len(device_ids))
         model = torch.nn.DataParallel(model, device_ids=device_ids)
     if len(device_ids) == 1:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(device_ids[0])
@@ -120,7 +126,7 @@ def restore_checkpoint(resume_path, model=None):
         model.module.load_state_dict(states)
     else:
         model.load_state_dict(states)
-    return [model,best,start_epoch]
+    return [model, best, start_epoch]
 
 
 def save_pickle(data, file_path):
@@ -164,6 +170,7 @@ def save_json(data, file_path):
     with open(str(file_path), 'w') as f:
         json.dump(data, f)
 
+
 def save_numpy(data, file_path):
     '''
     保存成.npy文件
@@ -173,7 +180,8 @@ def save_numpy(data, file_path):
     '''
     if not isinstance(file_path, Path):
         file_path = Path(file_path)
-    np.save(str(file_path),data)
+    np.save(str(file_path), data)
+
 
 def load_numpy(file_path):
     '''
@@ -184,6 +192,7 @@ def load_numpy(file_path):
     if not isinstance(file_path, Path):
         file_path = Path(file_path)
     np.load(str(file_path))
+
 
 def load_json(file_path):
     '''
@@ -198,7 +207,8 @@ def load_json(file_path):
         data = json.load(f)
     return data
 
-def json_to_text(file_path,data):
+
+def json_to_text(file_path, data):
     '''
     将json list写入text文件中
     :param file_path:
@@ -211,6 +221,7 @@ def json_to_text(file_path,data):
         for line in data:
             line = json.dumps(line, ensure_ascii=False)
             fw.write(line + '\n')
+
 
 def save_model(model, model_path):
     """ 存储不含有显卡信息的state_dict或model
@@ -228,6 +239,7 @@ def save_model(model, model_path):
         state_dict[key] = state_dict[key].cpu()
     torch.save(state_dict, model_path)
 
+
 def load_model(model, model_path):
     '''
     加载模型
@@ -239,7 +251,7 @@ def load_model(model, model_path):
     '''
     if isinstance(model_path, Path):
         model_path = str(model_path)
-    logging.info(f"loading model from {str(model_path)} .")
+    logging.info("loading model from %s .", str(model_path))
     states = torch.load(model_path)
     state = states['state_dict']
     if isinstance(model, nn.DataParallel):
@@ -260,9 +272,10 @@ class AverageMeter(object):
         >>>     loss.update(raw_loss.item(),n = 1)
         >>> cur_loss = loss.avg
     '''
-
     def __init__(self):
         self.reset()
+        self.val = 0
+        self.avg = 0
 
     def reset(self):
         self.val = 0
@@ -291,15 +304,14 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
         >>>     summary(self.model,*batch,show_input=True)
         >>>     break
     '''
-
     def register_hook(module):
-        def hook(module, input, output=None):
+        def hook(module, input_, output=None):
             class_name = str(module.__class__).split(".")[-1].split("'")[0]
             module_idx = len(summary)
 
             m_key = f"{class_name}-{module_idx + 1}"
             summary[m_key] = OrderedDict()
-            summary[m_key]["input_shape"] = list(input[0].size())
+            summary[m_key]["input_shape"] = list(input_[0].size())
             summary[m_key]["input_shape"][0] = batch_size
 
             if show_input is False and output is not None:
@@ -319,13 +331,17 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
 
             params = 0
             if hasattr(module, "weight") and hasattr(module.weight, "size"):
-                params += torch.prod(torch.LongTensor(list(module.weight.size())))
+                params += torch.prod(
+                    torch.LongTensor(list(module.weight.size())))
                 summary[m_key]["trainable"] = module.weight.requires_grad
             if hasattr(module, "bias") and hasattr(module.bias, "size"):
-                params += torch.prod(torch.LongTensor(list(module.bias.size())))
+                params += torch.prod(torch.LongTensor(list(
+                    module.bias.size())))
             summary[m_key]["nb_params"] = params
 
-        if (not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model)):
+        if (not isinstance(module, nn.Sequential)
+                and not isinstance(module, nn.ModuleList)
+                and not (module == model)):
             if show_input is True:
                 hooks.append(module.register_forward_pre_hook(hook))
             else:
@@ -343,13 +359,17 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
     for h in hooks:
         h.remove()
 
-    print("-----------------------------------------------------------------------")
+    print(
+        "-----------------------------------------------------------------------"
+    )
     if show_input is True:
         line_new = f"{'Layer (type)':>25}  {'Input Shape':>25} {'Param #':>15}"
     else:
         line_new = f"{'Layer (type)':>25}  {'Output Shape':>25} {'Param #':>15}"
     print(line_new)
-    print("=======================================================================")
+    print(
+        "======================================================================="
+    )
 
     total_params = 0
     total_output = 0
@@ -380,8 +400,12 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
 
         print(line_new)
 
-    print("=======================================================================")
+    print(
+        "======================================================================="
+    )
     print(f"Total params: {total_params:0,}")
     print(f"Trainable params: {trainable_params:0,}")
     print(f"Non-trainable params: {(total_params - trainable_params):0,}")
-    print("-----------------------------------------------------------------------")
+    print(
+        "-----------------------------------------------------------------------"
+    )

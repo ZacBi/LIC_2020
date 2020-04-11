@@ -4,4 +4,4 @@ cd apex
 pip install -v --no-cache-dir --global-option="--pyprof" --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 
 echo "********** Install additional packages **********"
-conda install --file requirements.txt --yes
+pip install -r requirements.txt

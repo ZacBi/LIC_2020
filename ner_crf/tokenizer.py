@@ -1,4 +1,3 @@
-from transformers import AutoTokenizer
 
 
 def convert_to_unicode(text):
@@ -18,7 +17,3 @@ def whitespace_tokenize(text):
         return []
     tokens = text.split()
     return tokens
-
-class Tokenizer(AutoTokenizer):
-    def __init__(self):
-        super().__init__()

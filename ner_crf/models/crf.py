@@ -1,3 +1,5 @@
+# pylint: disable=bad-continuation
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -33,6 +35,7 @@ def log_sum_exp_batch(vecs):
 
 class CRF(nn.Module):
     def __init__(self, tagset_size, tag_dictionary, device, is_bert=None):
+        # pylint: disable=invalid-name
         super(CRF, self).__init__()
 
         self.START_TAG = "<START>"
@@ -142,22 +145,22 @@ class CRF(nn.Module):
         stop = stop[None, :].repeat(tags.shape[0], 1)
         pad_start_tags = torch.cat([start, tags], 1)
         pad_stop_tags = torch.cat([tags, stop], 1)
-        for i in range(len(lens_)):
+        for i, _ in enumerate(lens_):
             pad_stop_tags[i, lens_[i]:] = self.tag_dictionary[self.STOP_TAG]
         score = torch.FloatTensor(feats.shape[0]).to(self.device)
         for i in range(feats.shape[0]):
-            r = torch.LongTensor(range(lens_[i])).to(self.device)
+            res = torch.LongTensor(range(lens_[i])).to(self.device)
             score[i] = torch.sum(self.transitions[
                 pad_stop_tags[i, :lens_[i] + 1],
                 pad_start_tags[i, :lens_[i] + 1]]) + torch.sum(
-                    feats[i, r, tags[i, :lens_[i]]])
+                    feats[i, res, tags[i, :lens_[i]]])
         return score
 
     def _obtain_labels(self, feature, id2label, input_lens):
         tags = []
         all_tags = []
         for feats, length in zip(feature, input_lens):
-            confidences, tag_seq, scores = self._viterbi_decode(feats[:length])
+            _, tag_seq, scores = self._viterbi_decode(feats[:length])
             tags.append([id2label[tag] for tag in tag_seq])
             all_tags.append([[
                 id2label[score_id] for score_id, score in enumerate(score_dist)
@@ -172,4 +175,3 @@ class CRF(nn.Module):
         gold_score = self._score_sentence(features, tags, lengths)
         score = forward_score - gold_score
         return score.mean()
-

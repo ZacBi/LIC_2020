@@ -1,111 +1,101 @@
 """ Named entity recognition fine-tuning: utilities to work with CLUENER task. """
-import torch
-import logging
+# pylint: disable=bad-continuation
+
 import os
-import copy
 import json
-from .utils_ner import DataProcessor
-logger = logging.getLogger(__name__)
+import logging
+from collections import namedtuple
 
-class InputExample(object):
-    """A single training/test example for token classification."""
-    def __init__(self, guid, text_a, labels):
-        """Constructs a InputExample.
-        Args:
-            guid: Unique id for the example.
-            text_a: list. The words of the sequence.
-            labels: (Optional) list. The labels for each word of the sequence. This should be
-            specified for train and dev examples, but not for test examples.
-        """
-        self.guid = guid
-        self.text_a = text_a
-        self.labels = labels
+import torch
+from ner_crf.processors.utils_ner import DataProcessor
+from ner_crf.tokenizer import whitespace_tokenize
 
-    def __repr__(self):
-        return str(self.to_json_string())
-    def to_dict(self):
-        """Serializes this instance to a Python dictionary."""
-        output = copy.deepcopy(self.__dict__)
-        return output
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-class InputFeatures(object):
-    """A single set of features of data."""
-    def __init__(self, input_ids, input_mask, input_len,segment_ids, label_ids):
-        self.input_ids = input_ids
-        self.input_mask = input_mask
-        self.segment_ids = segment_ids
-        self.label_ids = label_ids
-        self.input_len = input_len
+InputFeatures = namedtuple(
+    'InputFeatures',
+    ['input_ids', 'input_mask', 'segment_ids', 'label_ids', 'input_len'])
 
-    def __repr__(self):
-        return str(self.to_json_string())
+Example = namedtuple('Example', [
+    "id", "text_a", "label", "ori_text", "ori_2_new_index", "roles", "sentence"
+])
 
-    def to_dict(self):
-        """Serializes this instance to a Python dictionary."""
-        output = copy.deepcopy(self.__dict__)
-        return output
-
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 def collate_fn(batch):
     """
     batch should be a list of (sequence, target, length) tuples...
     Returns a padded tensor of sequences sorted from longest to shortest,
     """
-    all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels = map(torch.stack, zip(*batch))
+    all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels = map(
+        torch.stack, zip(*batch))
     max_len = max(all_lens).item()
     all_input_ids = all_input_ids[:, :max_len]
     all_attention_mask = all_attention_mask[:, :max_len]
     all_token_type_ids = all_token_type_ids[:, :max_len]
-    all_labels = all_labels[:,:max_len]
-    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels,all_lens
+    all_labels = all_labels[:, :max_len]
+    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels, all_lens
 
-def convert_examples_to_features(examples,label_list,max_seq_length,tokenizer,
-                                 cls_token_at_end=False,cls_token="[CLS]",cls_token_segment_id=1,
-                                 sep_token="[SEP]",pad_on_left=False,pad_token=0,pad_token_segment_id=0,
-                                 sequence_a_segment_id=0,mask_padding_with_zero=True,):
+
+def _reseg_token_label(tokens, labels, tokenizer):
+    """_reseg_token_label"""
+    assert len(tokens) == len(labels)
+    ret_tokens = []
+    ret_labels = []
+    for token, label in zip(tokens, labels):
+        sub_token = tokenizer.tokenize(token)
+        if not sub_token:
+            continue
+        ret_tokens.extend(sub_token)
+        if len(sub_token) == 1:
+            ret_labels.append(label)
+            continue
+
+        if label == "O" or label.startswith("I-"):
+            ret_labels.extend([label] * len(sub_token))
+        elif label.startswith("B-"):
+            i_label = "I-" + label[2:]
+            ret_labels.extend([label] + [i_label] * (len(sub_token) - 1))
+
+    assert len(ret_tokens) == len(ret_labels)
+    return ret_tokens, ret_labels
+
+
+def convert_examples_to_features(
+    examples,
+    label_map,
+    max_seq_length,
+    tokenizer,
+    cls_token_at_end=False,
+    cls_token="[CLS]",
+    cls_token_segment_id=1,
+    sep_token="[SEP]",
+    pad_on_left=False,
+    pad_token=0,
+    pad_token_segment_id=0,
+    sequence_a_segment_id=0,
+    mask_padding_with_zero=True,
+):
     """ Loads a data file into a list of `InputBatch`s
         `cls_token_at_end` define the location of the CLS token:
             - False (Default, BERT/XLM pattern): [CLS] + A + [SEP] + B + [SEP]
             - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
         `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
     """
-    label_map = {label: i for i, label in enumerate(label_list)}
     features = []
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d", ex_index, len(examples))
-        tokens = tokenizer.tokenize(example.text_a)
-        label_ids = [label_map[x] for x in example.labels]
+
+        tokens = whitespace_tokenize(example.text_a)
+        labels = whitespace_tokenize(example.label)
+        tokens, labels = _reseg_token_label(tokens, labels, tokenizer)
+
         # Account for [CLS] and [SEP] with "- 2".
         special_tokens_count = 2
         if len(tokens) > max_seq_length - special_tokens_count:
-            tokens = tokens[: (max_seq_length - special_tokens_count)]
-            label_ids = label_ids[: (max_seq_length - special_tokens_count)]
+            tokens = tokens[:(max_seq_length - special_tokens_count)]
+            label_ids = label_ids[:(max_seq_length - special_tokens_count)]
 
-        # The convention in BERT is:
-        # (a) For sequence pairs:
-        #  tokens:   [CLS] is this jack ##son ##ville ? [SEP] no it is not . [SEP]
-        #  type_ids:   0   0  0    0    0     0       0   0   1  1  1  1   1   1
-        # (b) For single sequences:
-        #  tokens:   [CLS] the dog is hairy . [SEP]
-        #  type_ids:   0   0   0   0  0     0   0
-        #
-        # Where "type_ids" are used to indicate whether this is the first
-        # sequence or the second sequence. The embedding vectors for `type=0` and
-        # `type=1` were learned during pre-training and are added to the wordpiece
-        # embedding vector (and position vector). This is not *strictly* necessary
-        # since the [SEP] token unambiguously separates the sequences, but it makes
-        # it easier for the model to learn the concept of sequences.
-        #
-        # For classification tasks, the first vector (corresponding to [CLS]) is
-        # used as as the "sentence vector". Note that this only makes sense because
-        # the entire model is fine-tuned.
         tokens += [sep_token]
         label_ids += [label_map[sep_token]]
         segment_ids = [sequence_a_segment_id] * len(tokens)
@@ -128,8 +118,10 @@ def convert_examples_to_features(examples,label_list,max_seq_length,tokenizer,
         padding_length = max_seq_length - len(input_ids)
         if pad_on_left:
             input_ids = ([pad_token] * padding_length) + input_ids
-            input_mask = ([0 if mask_padding_with_zero else 1] * padding_length) + input_mask
-            segment_ids = ([pad_token_segment_id] * padding_length) + segment_ids
+            input_mask = ([0 if mask_padding_with_zero else 1] *
+                          padding_length) + input_mask
+            segment_ids = ([pad_token_segment_id] *
+                           padding_length) + segment_ids
             label_ids = ([pad_token] * padding_length) + label_ids
         else:
             input_ids += [pad_token] * padding_length
@@ -141,54 +133,150 @@ def convert_examples_to_features(examples,label_list,max_seq_length,tokenizer,
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
         assert len(label_ids) == max_seq_length
+
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s", example.guid)
             logger.info("tokens: %s", " ".join([str(x) for x in tokens]))
             logger.info("input_ids: %s", " ".join([str(x) for x in input_ids]))
-            logger.info("input_mask: %s", " ".join([str(x) for x in input_mask]))
-            logger.info("segment_ids: %s", " ".join([str(x) for x in segment_ids]))
+            logger.info("input_mask: %s",
+                        " ".join([str(x) for x in input_mask]))
+            logger.info("segment_ids: %s",
+                        " ".join([str(x) for x in segment_ids]))
             logger.info("label_ids: %s", " ".join([str(x) for x in label_ids]))
 
-        features.append(InputFeatures(input_ids=input_ids, input_mask=input_mask,input_len = input_len,
-                                      segment_ids=segment_ids, label_ids=label_ids))
+        features.append(
+            InputFeatures(input_ids=input_ids,
+                          input_mask=input_mask,
+                          input_len=input_len,
+                          segment_ids=segment_ids,
+                          label_ids=label_ids))
     return features
+
 
 class CluenerProcessor(DataProcessor):
     """Processor for the chinese ner data set."""
+    def __init__(self, label_vocab=None):
+        self.label_vocab = label_vocab
 
     def get_train_examples(self, data_dir):
         """See base class."""
-        return self._create_examples(self._read_json(os.path.join(data_dir, "train.json")), "train")
+        return self._create_examples(
+            self._read_json(os.path.join(data_dir, "train.json")), "train")
 
     def get_dev_examples(self, data_dir):
         """See base class."""
-        return self._create_examples(self._read_json(os.path.join(data_dir, "dev.json")), "dev")
+        return self._create_examples(
+            self._read_json(os.path.join(data_dir, "dev.json")), "dev")
 
     def get_test_examples(self, data_dir):
         """See base class."""
-        return self._create_examples(self._read_json(os.path.join(data_dir, "test.json")), "test")
+        return self._create_examples(
+            self._read_json(os.path.join(data_dir, "test.json")), "test")
 
-    def get_labels(self):
+    # FIXME: dynamic generate labels
+    def get_labels(self, label_vocab):
         """See base class."""
-        return ["X", "B-address", "B-book", "B-company", 'B-game', 'B-government', 'B-movie', 'B-name',
-                'B-organization', 'B-position','B-scene',"I-address",
-                "I-book", "I-company", 'I-game', 'I-government', 'I-movie', 'I-name',
-                'I-organization', 'I-position','I-scene',
-                "S-address", "S-book", "S-company", 'S-game', 'S-government', 'S-movie',
-                'S-name', 'S-organization', 'S-position',
-                'S-scene','O',"[CLS]", "[SEP]"]
+        return [
+            "X", "B-address", "B-book", "B-company", 'B-game', 'B-government',
+            'B-movie', 'B-name', 'B-organization', 'B-position', 'B-scene',
+            "I-address", "I-book", "I-company", 'I-game', 'I-government',
+            'I-movie', 'I-name', 'I-organization', 'I-position', 'I-scene',
+            "S-address", "S-book", "S-company", 'S-game', 'S-government',
+            'S-movie', 'S-name', 'S-organization', 'S-position', 'S-scene',
+            'O', "[CLS]", "[SEP]"
+        ]
 
-    def _create_examples(self, lines, set_type):
-        """Creates examples for the training and dev sets."""
+    def _read_json(self, input_file):
+        """_read_json_file"""
+        input_data = []
+        with open(input_file, "r", encoding='utf8') as f_obj:
+            for line in f_obj:
+                d_json = json.loads(line.strip())
+                input_data.append(d_json)
+        return input_data
+
+    def _create_examples(self, input_data, set_type):
+        """_examples_by_json"""
+        def process_sent_ori_2_new(sent, roles_list):
+            """process_sent_ori_2_new"""
+            words = list(sent)
+            sent_ori_2_new_index = {}
+            new_words = []
+            new_roles_list = {}
+            for role_type, role in roles_list.items():
+                new_roles_list[role_type] = {
+                    "role_type": role_type,
+                    "start": -1,
+                    "end": -1
+                }
+
+            for i, word in enumerate(words):
+                for role_type, role in roles_list.items():
+                    if i == role["start"]:
+                        new_roles_list[role_type]["start"] = len(new_words)
+                    if i == role["end"]:
+                        new_roles_list[role_type]["end"] = len(new_words)
+
+                if not word.strip():
+                    # delete the white space
+                    sent_ori_2_new_index[i] = -1
+                    for role_type, role in roles_list.items():
+                        if i == role["start"]:
+                            new_roles_list[role_type]["start"] += 1
+                        if i == role["end"]:
+                            new_roles_list[role_type]["end"] -= 1
+                else:
+                    sent_ori_2_new_index[i] = len(new_words)
+                    new_words.append(word)
+
+            for role_type, role in new_roles_list.items():
+                if role["start"] > -1:
+                    role["text"] = u"".join(
+                        new_words[role["start"]:role["end"] + 1])
+                if role["end"] == len(new_words):
+                    role["end"] = len(new_words) - 1
+
+            return [words, new_words, sent_ori_2_new_index, new_roles_list]
+
         examples = []
-        for (i, line) in enumerate(lines):
-            guid = "%s-%s" % (set_type, i)
-            text_a= line['words']
-            # BIOS
-            labels = line['labels']
-            examples.append(InputExample(guid=guid, text_a=text_a, labels=labels))
+        for idx, data in enumerate(input_data):
+            event_id = data["event_id"]
+            sentence = data["text"]
+            roles_list = {}
+            for role in data["arguments"]:
+                role_type = role["role"]
+                role_start = role["argument_start_index"]
+                role_text = role["argument"]
+                role_end = role_start + len(role_text) - 1
+                roles_list[role_type] = {
+                    "role_type": role_type,
+                    "start": role_start,
+                    "end": role_end,
+                    "argument": role_text
+                }
+
+            (sent_words, new_sent_words, ori_2_new_sent_index,
+             new_roles_list) = process_sent_ori_2_new(sentence.lower(),
+                                                      roles_list)
+
+            new_sent_labels = [u"O"] * len(new_sent_words)
+            for role_type, role in new_roles_list.items():
+                for i in range(role["start"], role["end"] + 1):
+                    if i == role["start"]:
+                        new_sent_labels[i] = u"B-{}".format(role_type)
+                    else:
+                        new_sent_labels[i] = u"I-{}".format(role_type)
+            example = Example(id=event_id,
+                              text_a=u" ".join(new_sent_words),
+                              label=u" ".join(new_sent_labels),
+                              ori_text=sent_words,
+                              ori_2_new_index=ori_2_new_sent_index,
+                              roles=new_roles_list,
+                              sentence=sentence)
+
+            if idx < 5:
+                logger.info("example %d : %s", idx, str(example._asdict()))
+
+            examples.append(example)
         return examples
-ner_processors = {
-    'cluener':CluenerProcessor
-}
