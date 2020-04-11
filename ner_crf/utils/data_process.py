@@ -4,14 +4,17 @@
 """
 处理样本样本数据作为训练以及处理schema
 """
+import sys
 import json
 import random
 
 from ner_crf.utils import utils_lic
 
 
-def schema_event_type_process(schema_path=None, save_path=None):
+def schema_event_type_process():
     """schema_process"""
+    schema_path = sys.argv[2]
+    save_path = sys.argv[3]
     if not schema_path or not save_path:
         raise Exception("set schema_path and save_path first")
     index = 0
@@ -32,8 +35,10 @@ def schema_event_type_process(schema_path=None, save_path=None):
     utils_lic.write_by_lines(save_path, outputs)
 
 
-def schema_role_process(schema_path=None, save_path=None):
+def schema_role_process():
     """schema_role_process"""
+    schema_path = sys.argv[2]
+    save_path = sys.argv[3]
     if not schema_path or not save_path:
         raise Exception("set schema_path and save_path first")
     index = 0
@@ -48,23 +53,29 @@ def schema_role_process(schema_path=None, save_path=None):
         index += 1
         outputs.append(u"I-{}\t{}".format(r, index))
         index += 1
-    outputs.append(u"O\t{}".format(index))
+    # Add "[CLS]" and "[SEP]" for CRF
+
+    outputs.append(u"[CLS]\t{}".format(index))
+    outputs.append(u"[SEP]\t{}".format(index + 1))
+    outputs.append(u"O\t{}".format(index + 2))
     print(u"include roles {}，create label {}".format(len(roles), len(outputs)))
     utils_lic.write_by_lines(save_path, outputs)
 
 
-def origin_events_process(
-    origin_events_path=None,    
-    save_dir=None,
-    split_data=False,
-    alias='',
-):
+def origin_events_process():
     """origin_events_process
 
     Args:
         alias: the prefix of data, e.g. 'alias_train.json'
 
     """
+    origin_events_path = sys.argv[2]
+    save_dir = sys.argv[3]
+    try:
+        split_data = sys.argv[4]
+        split_data = True if split_data.lower == 'true' else False
+    except:
+        split_data = False
     if not origin_events_path or not save_dir:
         raise Exception("set origin_events_path and save_dir first")
     output = []
@@ -89,15 +100,11 @@ def origin_events_process(
             u"include sentences {}, events {}, train datas {}, dev datas {}, test datas {}"
             .format(len(lines), len(output), len(train_data), len(test_data),
                     len(test_data)))
-        utils_lic.write_by_lines(u"{}/train_{}.json".format(save_dir, alias),
-                             train_data)
-        utils_lic.write_by_lines(u"{}/dev_{}.json".format(save_dir, alias),
-                             test_data)
-        utils_lic.write_by_lines(u"{}/test_{}.json".format(save_dir, alias),
-                             test_data)
+        utils_lic.write_by_lines(u"{}/train.json".format(save_dir), train_data)
+        utils_lic.write_by_lines(u"{}/dev.json".format(save_dir), test_data)
+        utils_lic.write_by_lines(u"{}/test.json".format(save_dir), test_data)
     else:
-        utils_lic.write_by_lines(u"{}/train_{}.json".format(save_dir, alias),
-                             output)
+        utils_lic.write_by_lines(u"{}/train.json".format(save_dir), output)
 
 
 def run(func_name=None):
