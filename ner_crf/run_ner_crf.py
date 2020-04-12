@@ -25,7 +25,6 @@ from transformers import (
 )
 from tqdm import tqdm, trange
 
-
 from ner_crf.utils import (
     json_to_text,
     seed_everything,
@@ -213,8 +212,8 @@ def train(args, train_dataset, model, tokenizer):
                     torch.nn.utils.clip_grad_norm_(model.parameters(),
                                                    args.max_grad_norm)
                 # Update learning rate schedule
-                scheduler.step()
                 optimizer.step()
+                scheduler.step()
                 model.zero_grad()
                 global_step += 1
 
@@ -274,7 +273,8 @@ def evaluate(args, model, tokenizer, prefix=""):
     eval_output_dir = args.output_dir
     if not os.path.exists(eval_output_dir):
         os.makedirs(eval_output_dir)
-    eval_dataset = load_and_cache_examples(args,
+    eval_dataset = load_and_cache_examples(
+        args,
         tokenizer,
         mode='dev',
     )
@@ -495,7 +495,6 @@ def load_and_cache_examples(args, tokenizer, mode='train'):
 def main():
     args = get_args()
 
-
     # Check output dir
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -526,7 +525,8 @@ def main():
 
     # Prepare NER task
     args.label_map = get_label_map_by_file(args.label_map_config)
-    args.label2id = {label: i for i, label in enumerate(args.label_map)}
+    args.label2id = args.label_map
+    args.id2label = {i: label for label, i in args.label_map.item()}
     args.num_labels = len(args.label_map)
 
     # Load pretrained model and tokenizer
