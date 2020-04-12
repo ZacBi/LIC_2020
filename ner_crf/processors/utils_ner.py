@@ -1,26 +1,6 @@
 import csv
 import json
 import torch
-from transformers import BertTokenizer
-
-
-class CNerTokenizer(BertTokenizer):
-    def __init__(self, vocab_file, do_lower_case=False):
-        super().__init__(vocab_file=str(vocab_file),
-                         do_lower_case=do_lower_case)
-        self.vocab_file = str(vocab_file)
-        self.do_lower_case = do_lower_case
-
-    def tokenize(self, text):
-        _tokens = []
-        for char in text:
-            if self.do_lower_case:
-                char = char.lower()
-            if char in self.vocab:
-                _tokens.append(char)
-            else:
-                _tokens.append('[UNK]')
-        return _tokens
 
 
 class DataProcessor(object):

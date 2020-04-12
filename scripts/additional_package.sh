@@ -1,7 +1,4 @@
-cd ~/work
-git clone https://github.com/NVIDIA/apex
-cd apex
-pip install -v --no-cache-dir --global-option="--pyprof" --global-option="--cpp_ext" --global-option="--cuda_ext" ./
-
 echo "********** Install additional packages **********"
-pip install -r requirements.txt
+conda install --file requirements.txt --yes
+pip install transformers tensorboard
+pip install -e ./ --no-binary :all:

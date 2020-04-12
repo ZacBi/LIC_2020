@@ -19,6 +19,7 @@ from transformers import (
     MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
     AdamW,
     BertConfig,
+    BertTokenizer,
     AlbertConfig,
     get_linear_schedule_with_warmup,
 )
@@ -35,7 +36,6 @@ from ner_crf.models import AlbertCrfForNer, BertCrfForNer
 from ner_crf.metrics import SeqEntityScore
 from ner_crf.args import get_args
 from ner_crf.processors import (
-    CNerTokenizer,
     CluenerProcessor,
     collate_fn,
     get_entities,
@@ -49,8 +49,8 @@ ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys())
 
 MODEL_CLASSES = {
     ## bert ernie bert_wwm bert_wwwm_ext,roberta
-    'bert': (BertConfig, BertCrfForNer, CNerTokenizer),
-    'albert': (AlbertConfig, AlbertCrfForNer, CNerTokenizer)
+    'bert': (BertConfig, BertCrfForNer, BertTokenizer),
+    'albert': (AlbertConfig, AlbertCrfForNer, BertTokenizer)
 }
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name

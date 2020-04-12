@@ -10,4 +10,4 @@ conda config --show channels
 
 # Create new env
 echo "********** Create conda env 'torch' **********"
-conda create -n torch python=3.7
+conda create -n torch python=3.7 --yes
