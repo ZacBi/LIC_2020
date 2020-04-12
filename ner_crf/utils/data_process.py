@@ -48,6 +48,7 @@ def schema_role_process():
         for role in d_json["role_list"]:
             roles.add(role["role"])
     outputs = []
+    outputs.append(u"O\t{}".format(0))
     for r in list(roles):
         outputs.append(u"B-{}\t{}".format(r, index))
         index += 1
@@ -57,7 +58,6 @@ def schema_role_process():
 
     outputs.append(u"[CLS]\t{}".format(index))
     outputs.append(u"[SEP]\t{}".format(index + 1))
-    outputs.append(u"O\t{}".format(index + 2))
     print(u"include roles {}，create label {}".format(len(roles), len(outputs)))
     utils_lic.write_by_lines(save_path, outputs)
 

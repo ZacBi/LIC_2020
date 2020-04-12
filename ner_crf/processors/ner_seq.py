@@ -86,6 +86,7 @@ def convert_examples_to_features(
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d", ex_index, len(examples))
 
+        # Resegment tokens and labels
         tokens = whitespace_tokenize(example.text_a)
         labels = whitespace_tokenize(example.label)
         tokens, labels = _reseg_token_label(tokens, labels, tokenizer)
@@ -94,22 +95,23 @@ def convert_examples_to_features(
         special_tokens_count = 2
         if len(tokens) > max_seq_length - special_tokens_count:
             tokens = tokens[:(max_seq_length - special_tokens_count)]
-            label_ids = label_ids[:(max_seq_length - special_tokens_count)]
+            labels = labels[:(max_seq_length - special_tokens_count)]
 
         tokens += [sep_token]
-        label_ids += [label_map[sep_token]]
+        labels += [sep_token]
         segment_ids = [sequence_a_segment_id] * len(tokens)
 
         if cls_token_at_end:
             tokens += [cls_token]
-            label_ids += [label_map[cls_token]]
+            labels += [cls_token]
             segment_ids += [cls_token_segment_id]
         else:
             tokens = [cls_token] + tokens
-            label_ids = [label_map[cls_token]] + label_ids
+            label_ids = [cls_token] + label_ids
             segment_ids = [cls_token_segment_id] + segment_ids
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        label_ids = [label_map[label] for label in labels]
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
@@ -177,15 +179,7 @@ class CluenerProcessor(DataProcessor):
     # FIXME: dynamic generate labels
     def get_labels(self, label_vocab):
         """See base class."""
-        return [
-            "X", "B-address", "B-book", "B-company", 'B-game', 'B-government',
-            'B-movie', 'B-name', 'B-organization', 'B-position', 'B-scene',
-            "I-address", "I-book", "I-company", 'I-game', 'I-government',
-            'I-movie', 'I-name', 'I-organization', 'I-position', 'I-scene',
-            "S-address", "S-book", "S-company", 'S-game', 'S-government',
-            'S-movie', 'S-name', 'S-organization', 'S-position', 'S-scene',
-            'O', "[CLS]", "[SEP]"
-        ]
+        return []
 
     def _read_json(self, input_file):
         """_read_json_file"""
@@ -275,8 +269,15 @@ class CluenerProcessor(DataProcessor):
                               roles=new_roles_list,
                               sentence=sentence)
 
-            if idx < 5:
-                logger.info("example %d : %s", idx, str(example._asdict()))
+            logging_examples(example, idx)
 
             examples.append(example)
         return examples
+
+
+def logging_examples(example, idx, idx_bound=5):
+    if idx >= idx_bound:
+        return
+    logger.info("******** example %d ********", idx)
+    for key, val in example._asdict():
+        logger.info('%s : %s', key, val)
