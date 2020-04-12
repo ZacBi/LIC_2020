@@ -279,5 +279,5 @@ def logging_examples(example, idx, idx_bound=5):
     if idx >= idx_bound:
         return
     logger.info("******** example %d ********", idx)
-    for key, val in example._asdict():
+    for key, val in example._asdict().items():
         logger.info('%s : %s', key, val)
