@@ -107,7 +107,7 @@ def convert_examples_to_features(
             segment_ids += [cls_token_segment_id]
         else:
             tokens = [cls_token] + tokens
-            label_ids = [cls_token] + label_ids
+            labels = [cls_token] + labels
             segment_ids = [cls_token_segment_id] + segment_ids
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
