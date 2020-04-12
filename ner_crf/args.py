@@ -82,7 +82,7 @@ def get_args():
     )
     parser.add_argument(
         "--eval_max_seq_length",
-        default=512,
+        default=258,
         type=int,
         help=
         "The maximum total input sequence length after tokenization. Sequences longer "
@@ -156,11 +156,11 @@ def get_args():
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--logging_steps",
                         type=int,
-                        default=500,
+                        default=50,
                         help="Log every X updates steps.")
     parser.add_argument("--save_steps",
                         type=int,
-                        default=500,
+                        default=100,
                         help="Save checkpoint every X updates steps.")
     parser.add_argument(
         "--eval_all_checkpoints",
@@ -187,7 +187,7 @@ def get_args():
         help="Overwrite the cached training and evaluation sets")
     parser.add_argument("--seed",
                         type=int,
-                        default=42,
+                        default=66,
                         help="random seed for initialization")
     parser.add_argument(
         "--fp16",

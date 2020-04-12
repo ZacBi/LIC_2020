@@ -11,3 +11,4 @@ python ner_crf/run_ner_crf.py \
 --cache_dir data/cache \
 --do_train \
 --evaluate_during_training \
+--per_gpu_train_batch_size 128
