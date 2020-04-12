@@ -47,8 +47,10 @@ def schema_role_process():
         d_json = json.loads(line)
         for role in d_json["role_list"]:
             roles.add(role["role"])
+    # Set labels
     outputs = []
     outputs.append(u"O\t{}".format(0))
+    index += 1
     for r in list(roles):
         outputs.append(u"B-{}\t{}".format(r, index))
         index += 1
