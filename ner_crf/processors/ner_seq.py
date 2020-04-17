@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 InputFeatures = namedtuple(
     'InputFeatures',
-    ['input_ids', 'input_mask', 'segment_ids', 'label_ids', 'input_len'])
+    ['input_ids', 'input_mask', 'token_type_ids', 'label_ids', 'input_len'])
 
 Example = namedtuple('Example', [
     "id", "text_a", "label", "ori_text", "ori_2_new_index", "roles", "sentence"
@@ -60,21 +60,11 @@ def _reseg_token_label(tokens, labels, tokenizer):
     return ret_tokens, ret_labels
 
 
-def convert_examples_to_features(
-    examples,
-    label_map,
-    max_seq_length,
-    tokenizer,
-    cls_token_at_end=False,
-    cls_token="[CLS]",
-    cls_token_segment_id=1,
-    sep_token="[SEP]",
-    pad_on_left=False,
-    pad_token=0,
-    pad_token_segment_id=0,
-    sequence_a_segment_id=0,
-    mask_padding_with_zero=True,
-):
+# FIXME: Just for BERT, create a base for different models
+def convert_examples_to_features(examples,
+                                 tokenizer,
+                                 label2id,
+                                 max_seq_length=128):
     """ Loads a data file into a list of `InputBatch`s
         `cls_token_at_end` define the location of the CLS token:
             - False (Default, BERT/XLM pattern): [CLS] + A + [SEP] + B + [SEP]
@@ -97,50 +87,35 @@ def convert_examples_to_features(
             tokens = tokens[:(max_seq_length - special_tokens_count)]
             labels = labels[:(max_seq_length - special_tokens_count)]
 
-        tokens += [sep_token]
-        labels += [sep_token]
-        segment_ids = [sequence_a_segment_id] * len(tokens)
+        tokens += [tokenizer.sep_token]
+        labels += [tokenizer.sep_token]
 
-        if cls_token_at_end:
-            tokens += [cls_token]
-            labels += [cls_token]
-            segment_ids += [cls_token_segment_id]
-        else:
-            tokens = [cls_token] + tokens
-            labels = [cls_token] + labels
-            segment_ids = [cls_token_segment_id] + segment_ids
+        tokens = [tokenizer.cls_token] + tokens
+        labels = [tokenizer.cls_token] + labels
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
-        label_ids = [label_map[label] for label in labels]
+        label_ids = [label2id[label] for label in labels]
+        token_type_ids = [0] * len(input_ids)
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
-        input_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
-        input_len = len(label_ids)
+        input_mask = [1] * len(input_ids)
+
         # Zero-pad up to the sequence length.
         padding_length = max_seq_length - len(input_ids)
-        if pad_on_left:
-            input_ids = ([pad_token] * padding_length) + input_ids
-            input_mask = ([0 if mask_padding_with_zero else 1] *
-                          padding_length) + input_mask
-            segment_ids = ([pad_token_segment_id] *
-                           padding_length) + segment_ids
-            label_ids = ([pad_token] * padding_length) + label_ids
-        else:
-            input_ids += [pad_token] * padding_length
-            input_mask += [0 if mask_padding_with_zero else 1] * padding_length
-            segment_ids += [pad_token_segment_id] * padding_length
-            label_ids += [pad_token] * padding_length
+        input_ids += [tokenizer.pad_token_id] * padding_length
+        input_mask += [0] * padding_length
+        token_type_ids += [tokenizer.pad_token_id] * padding_length
+        label_ids += [tokenizer.pad_token_id] * padding_length
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
-        assert len(segment_ids) == max_seq_length
+        assert len(token_type_ids) == max_seq_length
         assert len(label_ids) == max_seq_length
 
         feature = InputFeatures(
             input_ids=input_ids,
             input_mask=input_mask,
-            input_len=input_len,
-            segment_ids=segment_ids,
+            token_type_ids=token_type_ids,
             label_ids=label_ids,
         )
         logging_examples(feature, ex_index)

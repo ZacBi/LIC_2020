@@ -24,10 +24,10 @@ def schema_event_type_process():
         event_types.add(d_json["event_type"])
 
     outputs = []
-    for et in list(event_types):
-        outputs.append(u"B-{}\t{}".format(et, index))
+    for event_type in list(event_types):
+        outputs.append(u"B-{}\t{}".format(event_type, index))
         index += 1
-        outputs.append(u"I-{}\t{}".format(et, index))
+        outputs.append(u"I-{}\t{}".format(event_type, index))
         index += 1
     outputs.append(u"O\t{}".format(index))
     print(u"include event type {},  create label {}".format(
@@ -51,10 +51,10 @@ def schema_role_process():
     outputs = []
     outputs.append(u"O\t{}".format(0))
     index += 1
-    for r in list(roles):
-        outputs.append(u"B-{}\t{}".format(r, index))
+    for role in list(roles):
+        outputs.append(u"B-{}\t{}".format(role, index))
         index += 1
-        outputs.append(u"I-{}\t{}".format(r, index))
+        outputs.append(u"I-{}\t{}".format(role, index))
         index += 1
     # Add "[CLS]" and "[SEP]" for CRF
 
@@ -75,8 +75,8 @@ def origin_events_process():
     save_dir = sys.argv[3]
     try:
         split_data = sys.argv[4]
-        split_data = True if split_data.lower == 'true' else False
-    except:
+        split_data = split_data.lower == 'true'
+    except:  # pylint: disable=bare-except
         split_data = False
     if not origin_events_path or not save_dir:
         raise Exception("set origin_events_path and save_dir first")
@@ -99,7 +99,7 @@ def origin_events_process():
         train_data = output[:train_data_len]
         test_data = output[train_data_len:]
         print(
-            u"include sentences {}, events {}, train datas {}, dev datas {}, test datas {}"
+            u"include sentences {}, events {}, train data {}, dev data {}, test data {}"
             .format(len(lines), len(output), len(train_data), len(test_data),
                     len(test_data)))
         utils_lic.write_by_lines(u"{}/train.json".format(save_dir), train_data)

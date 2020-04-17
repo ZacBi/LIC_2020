@@ -1,177 +1,279 @@
 # pylint: disable=bad-continuation
-
 import torch
 from torch import nn
-import torch.nn.functional as F
-
-
-def to_scalar(var):
-    return var.view(-1).detach().tolist()[0]
-
-
-def argmax(vec):
-    _, idx = torch.max(vec, 1)
-    return to_scalar(idx)
-
-
-def log_sum_exp(vec):
-    max_score = vec[0, argmax(vec)]
-    max_score_broadcast = max_score.view(1, -1).expand(1, vec.size()[1])
-    return max_score + torch.log(
-        torch.sum(torch.exp(vec - max_score_broadcast)))
-
-
-def argmax_batch(vecs):
-    _, idx = torch.max(vecs, 1)
-    return idx
-
-
-def log_sum_exp_batch(vecs):
-    maxi = torch.max(vecs, 1)[0]
-    maxi_bc = maxi[:, None].repeat(1, vecs.shape[1])
-    recti_ = torch.log(torch.sum(torch.exp(vecs - maxi_bc), 1))
-    return maxi + recti_
 
 
 class CRF(nn.Module):
-    def __init__(self, tagset_size, tag_dictionary, device, is_bert=None):
+    def __init__(self,
+                 num_labels,
+                 start_tag_id,
+                 end_tag_id,
+                 pad_tag_id=None,
+                 batch_first=True):
         # pylint: disable=invalid-name
-        super(CRF, self).__init__()
+        super().__init__()
 
-        self.START_TAG = "<START>"
-        self.STOP_TAG = "<STOP>"
-        if is_bert:
-            self.START_TAG = "[CLS]"
-            self.STOP_TAG = "[SEP]"
-        self.tag_dictionary = tag_dictionary
-        self.tagset_size = tagset_size
-        self.device = device
-        self.transitions = torch.randn(tagset_size, tagset_size)
-        # self.transitions = torch.zeros(tagset_size, tagset_size)
-        self.transitions.detach()[
-            self.tag_dictionary[self.START_TAG], :] = -10000
-        self.transitions.detach()[:,
-                                  self.tag_dictionary[self.STOP_TAG]] = -10000
-        self.transitions = self.transitions.to(device)
-        self.transitions = nn.Parameter(self.transitions)
+        self.num_labels = num_labels
+        self.START_TAG_ID = start_tag_id
+        self.END_TAG_ID = end_tag_id
+        self.PAD_TAG_ID = pad_tag_id
+        self.batch_first = batch_first
 
-    def _viterbi_decode(self, feats):
+        self.transitions = nn.Parameter(
+            torch.empty(self.num_labels, self.num_labels))
+        self._init_hidden()
+
+    def _init_hidden(self):
+        nn.init.uniform_(self.transitions, -0.1, 0.1)
+        # no transitions allowed to the beginning of sentence
+        self.transitions.data[:, self.START_TAG_ID] = -10000.
+        # no transitions allowed from the beginning of sentence
+        # NOTE: it's a trick to use tensor[r] instead of tensor[r, :]
+        self.transitions.data[self.END_TAG_ID] = -10000.
+
+        # NOTE: it's useless because we do not calculate the trans and emission
+        # score of pad tag id in forward func.
+        if self.PAD_TAG_ID is not None:
+            # no transitions from padding
+            self.transitions.data[self.PAD_TAG_ID, :] = -10000.0
+            # no transitions to padding
+            self.transitions.data[:, self.PAD_TAG_ID] = -10000.0
+            # except the end of sentence is reached
+            # or we are already in a pad position
+            self.transitions.data[self.EOS_TAG_ID, self.PAD_TAG_ID] = 0.0
+            self.transitions.data[self.PAD_TAG_ID, self.PAD_TAG_ID] = 0.0
+
+    def forward(self, emissions, tags, mask=None):
+        """Compute the negative log-likelihood. See `log_likelihood` method."""
+        nll = -self.log_likelihood(emissions, tags, mask=mask)
+        return nll
+
+    def log_likelihood(self,
+                       emissions: torch.Tensor,
+                       tags: torch.Tensor,
+                       mask: torch.Tensor = None):
+        """Compute the probability of a sequence of tags given a sequence of
+        emissions scores.
+
+        Args:
+            `emissions` (torch.Tensor): Sequence of emissions for each label.
+                Shape of (batch_size, seq_len, num_labels) if batch_first is True,
+                (seq_len, batch_size, num_labels) otherwise.
+            `tags` (torch.LongTensor): Sequence of labels.
+                Shape of (batch_size, seq_len) if batch_first is True,
+                (seq_len, batch_size) otherwise.
+            `mask` (torch.FloatTensor, optional): Tensor representing valid positions.
+                If None, all positions are considered valid.
+                Shape of (batch_size, seq_len) if batch_first is True,
+                (seq_len, batch_size) otherwise.
+
+        Returns:
+            torch.Tensor: the log-likelihoods for each sequence in the batch.
+                Shape of (batch_size,)
+        """
+
+        if not self.batch_first:
+            emissions = emissions.transpose(0, 1)
+            tags = tags.transpose(0, 1)
+
+        if mask is None:
+            mask = torch.ones(emissions.shape[:2], dtype=torch.float)
+
+        scores = self._compute_scores(emissions, tags, mask=mask)
+        partition = self._compute_log_partition(emissions, mask=mask)
+
+        return torch.sum(scores - partition)
+
+    def _compute_scores(self, emissions: torch.Tensor, tags: torch.Tensor,
+                        mask: torch.FloatTensor):
+        """Compute the scores for a given batch of emissions with their tags.
+
+        Args:
+            `emissions` (torch.Tensor): (batch_size, seq_len, num_labels)
+            `tags` (Torch.LongTensor): (batch_size, seq_len)
+            `mask` (Torch.FloatTensor): (batch_size, seq_len)
+
+        Returns:
+            torch.Tensor: Scores for each batch.
+                Shape of (batch_size,)
+        """
+
+        batch_size, _ = emissions.shape
+        scores = torch.zeros(batch_size, dtype=torch.float)
+
+        # save first and last tags to be used later
+        last_valid_idx = mask.int().sum(1) - 1
+
+        # Iterate by batch
+        # NOTE: actually, (for a sentence) transition score and emission socore,
+        # can be calculated individually because they are just
+        for batch_idx in range(batch_size):
+            # transition score
+            t_score = torch.sum(
+                self.transitions[tags[batch_idx, :last_valid_idx],
+                                 tags[batch_idx, 1:last_valid_idx + 1]])
+            # emission score
+            e_score = emissions[tags[batch_idx, 1:last_valid_idx]].sum()
+            scores[batch_idx] = t_score + e_score
+
+        return scores
+
+    def _compute_log_partition(self, emissions, mask):
+        """Compute the partition function in log-space using the forward-algorithm.
+
+        Args:
+            emissions (torch.Tensor): (batch_size, seq_len, num_labels)
+            mask (Torch.FloatTensor): (batch_size, seq_len)
+
+        Returns:
+            torch.Tensor: the partition scores for each batch.
+                Shape of (batch_size,)
+        """
+
+        batch_size, seq_length, num_labels = emissions.shape
+        last_valid_idx = mask.int().sum(1) - 1
+        mask[torch.arange(batch_size), last_valid_idx] = 0
+
+        # NOTE: we don't need to calculate in the form of log_sum_exp
+        # for the first valid token (not START token).
+        # Don't worry about the sequence ['[CLS]', '[SEP]'] for adding emissions[:, 1]
+        # into `alphas`, we don't predict empty sequence.
+        alphas = self.transitions[self.START_TAG_ID].expand(
+            batch_size, num_labels) + emissions[:, 1]
+
+        # Here we iterate by sequence length
+        # However, iterate by batch index is more readable in <<统计学习方法>>.
+        # HACK: we start from index 2 because we use bert, if we use XLnet or others.
+        # rewrite the progress.
+        for seq_idx in range(2, seq_length):
+            # (bs, num_labels) -> (bs, 1, num_labels)
+            e_scores = emissions[:, seq_idx].unsqueeze(1)
+
+            # (num_labels, num_labels) -> (1, num_labels, num_labels)
+            t_scores = self.transitions.unsqueeze(0)
+
+            # (bs, num_labels)  -> (bs, num_labels, 1)
+            a_scores = alphas.unsqueeze(2)
+
+            # Set alphas if the mask is valid, otherwise keep the current values
+            scores = e_scores + t_scores + a_scores
+            new_alphas = torch.logsumexp(scores, dim=1)
+
+            is_valid = mask[:, seq_idx].unsqueeze(-1)
+            alphas = is_valid * new_alphas + (1 - is_valid) * alphas
+
+        # add the scores for the final transition
+        last_transition = self.transitions[:, self.EOS_TAG_ID]
+        end_scores = alphas + last_transition.unsqueeze(0)
+
+        # return a *log* of sums of exp
+        return torch.logsumexp(end_scores, dim=1)
+
+    def _viterbi_decode(self, emissions, mask):
+        """Compute the viterbi algorithm to find the most probable sequence of labels
+        given a sequence of emissions.
+
+        Args:
+            emissions (torch.Tensor): (batch_size, seq_len, num_labels)
+            mask (Torch.FloatTensor): (batch_size, seq_len)
+
+        Returns:
+            best_sequences: list of lists of int: the best viterbi sequence of labels for each batch
+            max_final_scores: torch.Tensor: the viterbi score for the for each batch.
+                Shape of (batch_size,)
+        """
+        batch_size, seq_length, _ = emissions.shape
+        last_valid_idx = mask.int().sum(1) - 1
+        mask[torch.arange(batch_size), last_valid_idx] = 0
+
+        # In the first iteration, BOS will have all the scores and then, the max
+        # NOTE: the alphas here is totoally different from the alphas in `_compute_log_partition`
+        alphas = self.transitions[self.BOS_TAG_ID].unsqueeze(0) \
+                + emissions[:, 1]
+
         backpointers = []
-        backscores = []
-        scores = []
-        init_vvars = (torch.FloatTensor(1, self.tagset_size).to(
-            self.device).fill_(-10000.0))
-        init_vvars[0][self.tag_dictionary[self.START_TAG]] = 0
-        forward_var = init_vvars
 
-        for feat in feats:
-            next_tag_var = (forward_var.view(1, -1).expand(
-                self.tagset_size, self.tagset_size) + self.transitions)
-            _, bptrs_t = torch.max(next_tag_var, dim=1)
-            viterbivars_t = next_tag_var[range(len(bptrs_t)), bptrs_t]
-            forward_var = viterbivars_t + feat
-            backscores.append(forward_var)
-            backpointers.append(bptrs_t)
+        for i in range(2, seq_length):
+            # (bs, num_labels) -> (bs, 1, num_labels)
+            e_scores = emissions[:, i].unsqueeze(1)
 
-        terminal_var = (forward_var +
-                        self.transitions[self.tag_dictionary[self.STOP_TAG]])
-        terminal_var.detach()[self.tag_dictionary[self.STOP_TAG]] = -10000.0
-        terminal_var.detach()[self.tag_dictionary[self.START_TAG]] = -10000.0
-        best_tag_id = argmax(terminal_var.unsqueeze(0))
-        best_path = [best_tag_id]
-        for bptrs_t in reversed(backpointers):
-            best_tag_id = bptrs_t[best_tag_id]
-            best_path.append(best_tag_id.item())
-        best_scores = []
-        for backscore in backscores:
-            softmax = F.softmax(backscore, dim=0)
-            _, idx = torch.max(backscore, 0)
-            prediction = idx.item()
-            best_scores.append(softmax[prediction].item())
-            scores.append([elem.item() for elem in softmax.flatten()])
-        swap_best_path, swap_max_score = (
-            best_path[0],
-            scores[-1].index(max(scores[-1])),
-        )
-        scores[-1][swap_best_path], scores[-1][swap_max_score] = (
-            scores[-1][swap_max_score],
-            scores[-1][swap_best_path],
-        )
-        start = best_path.pop()
-        assert start == self.tag_dictionary[self.START_TAG]
-        best_path.reverse()
-        return best_scores, best_path, scores
+            # (num_labels, num_labels) -> (1, num_labels, num_labels)
+            t_scores = self.transitions.unsqueeze(0)
 
-    def _forward_alg(self, feats, lens_):
-        init_alphas = torch.FloatTensor(self.tagset_size).fill_(-10000.0)
-        init_alphas[self.tag_dictionary[self.START_TAG]] = 0.0
+            # (bs, num_labels)  -> (bs, num_labels, 1)
+            a_scores = alphas.unsqueeze(2)
 
-        forward_var = torch.zeros(
-            feats.shape[0],
-            feats.shape[1] + 1,
-            feats.shape[2],
-            dtype=torch.float,
-            device=self.device,
-        )
-        forward_var[:, 0, :] = init_alphas[None, :].repeat(feats.shape[0], 1)
-        transitions = self.transitions.view(1, self.transitions.shape[0],
-                                            self.transitions.shape[1]).repeat(
-                                                feats.shape[0], 1, 1)
-        for i in range(feats.shape[1]):
-            emit_score = feats[:, i, :]
-            tag_var = (
-                emit_score[:, :, None].repeat(1, 1, transitions.shape[2]) +
-                transitions + forward_var[:, i, :][:, :, None].repeat(
-                    1, 1, transitions.shape[2]).transpose(2, 1))
-            max_tag_var, _ = torch.max(tag_var, dim=2)
-            tag_var = tag_var - max_tag_var[:, :, None].repeat(
-                1, 1, transitions.shape[2])
-            agg_ = torch.log(torch.sum(torch.exp(tag_var), dim=2))
-            cloned = forward_var.clone()
-            cloned[:, i + 1, :] = max_tag_var + agg_
-            forward_var = cloned
-        forward_var = forward_var[range(forward_var.shape[0]), lens_, :]
-        terminal_var = forward_var + self.transitions[self.tag_dictionary[
-            self.STOP_TAG]][None, :].repeat(forward_var.shape[0], 1)
-        alpha = log_sum_exp_batch(terminal_var)
-        return alpha
+            # combine current scores with previous alphas
+            scores = e_scores + t_scores + a_scores
 
-    def _score_sentence(self, feats, tags, lens_):
-        start = torch.LongTensor([self.tag_dictionary[self.START_TAG]
-                                  ]).to(self.device)
-        start = start[None, :].repeat(tags.shape[0], 1)
-        stop = torch.LongTensor([self.tag_dictionary[self.STOP_TAG]
-                                 ]).to(self.device)
-        stop = stop[None, :].repeat(tags.shape[0], 1)
-        pad_start_tags = torch.cat([start, tags], 1)
-        pad_stop_tags = torch.cat([tags, stop], 1)
-        for i, _ in enumerate(lens_):
-            pad_stop_tags[i, lens_[i]:] = self.tag_dictionary[self.STOP_TAG]
-        score = torch.FloatTensor(feats.shape[0]).to(self.device)
-        for i in range(feats.shape[0]):
-            res = torch.LongTensor(range(lens_[i])).to(self.device)
-            score[i] = torch.sum(self.transitions[
-                pad_stop_tags[i, :lens_[i] + 1],
-                pad_start_tags[i, :lens_[i] + 1]]) + torch.sum(
-                    feats[i, res, tags[i, :lens_[i]]])
-        return score
+            # so far is exactly like the forward algorithm,
+            # but now, instead of calculating the logsumexp,
+            # we will find the highest score and the tag associated with it
+            max_scores, max_score_tags = torch.max(scores, dim=1)
 
-    def _obtain_labels(self, feature, id2label, input_lens):
-        tags = []
-        all_tags = []
-        for feats, length in zip(feature, input_lens):
-            _, tag_seq, scores = self._viterbi_decode(feats[:length])
-            tags.append([id2label[tag] for tag in tag_seq])
-            all_tags.append([[
-                id2label[score_id] for score_id, score in enumerate(score_dist)
-            ] for score_dist in scores])
-        return tags, all_tags
+            # set alphas if the mask is valid, otherwise keep the current values
+            is_valid = mask[:, i].unsqueeze(-1)
+            alphas = is_valid * max_scores + (1 - is_valid) * alphas
 
-    def calculate_loss(self, scores, tag_list, lengths):
-        return self._calculate_loss_old(scores, lengths, tag_list)
+            # add the max_score_tags for our list of backpointers
+            # max_scores has shape (batch_size, num_labels) so we transpose it to
+            # be compatible with our previous loopy version of viterbi
+            backpointers.append(max_score_tags.t())
 
-    def _calculate_loss_old(self, features, lengths, tags):
-        forward_score = self._forward_alg(features, lengths)
-        gold_score = self._score_sentence(features, tags, lengths)
-        score = forward_score - gold_score
-        return score.mean()
+        # Add the scores for the final transition
+        last_transition = self.transitions[:, self.EOS_TAG_ID]
+        end_scores = alphas + last_transition.unsqueeze(0)
+
+        # Get the final most probable score and the final most probable tag
+        max_final_scores, max_final_tags = torch.max(end_scores, dim=1)
+
+        # Find the best sequence of labels for each sample in the batch
+        best_sequences = []
+        for i in range(batch_size):
+
+            # recover the original sentence length for the i-th sample in the batch
+            sample_final_idx = last_valid_idx[i].item()
+
+            # recover the max tag for the last timestep
+            sample_final_tag = max_final_tags[i].item()
+
+            # limit the backpointers until the last but one
+            # since the last corresponds to the sample_final_tag
+            sample_backpointers = backpointers[:sample_final_idx - 1]
+
+            # follow the backpointers to build the sequence of labels
+            sample_path = self._find_best_path(i, sample_final_tag,
+                                               sample_backpointers)
+
+            # add this path to the list of best sequences
+            best_sequences.append(sample_path)
+
+        return best_sequences, max_final_scores
+
+    def _find_best_path(self, batch_dix, best_tag, backpointers):
+        """Auxiliary function to find the best path sequence for a specific sample.
+
+            Args:
+                batch_dix (int): sample index in the range [0, batch_size)
+                best_tag (int): tag which maximizes the final score
+                backpointers (list of lists of tensors): list of pointers with
+                shape (seq_len_i-1, nb_labels, batch_size) where seq_len_i
+                represents the length of the ith sample in the batch
+
+            Returns:
+                list of int: a list of tag indexes representing the bast path
+        """
+
+        # add the final best_tag to our best path
+        best_path = [best_tag]
+
+        # traverse the backpointers in backwards
+        for backpointers_t in reversed(backpointers):
+
+            # recover the best_tag at this timestep
+            best_tag = backpointers_t[best_tag][batch_dix].item()
+
+            # append to the beginning of the list so we don't need to reverse it later
+            best_path.insert(0, best_tag)
+
+        return best_path
