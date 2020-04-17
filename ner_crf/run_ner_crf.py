@@ -33,7 +33,7 @@ from ner_crf.utils import (
 from ner_crf.models import BertCRF
 from ner_crf.metrics import SeqEntityScore
 from ner_crf.args import get_args
-from ner_crf.logging import logging_train, logging_continuing_training
+from ner_crf.log import logging_train, logging_continuing_training
 from ner_crf.processors import (
     CluenerProcessor,
     collate_fn,
@@ -123,7 +123,8 @@ def train(args, train_dataset, model, tokenizer):
                 // args.gradient_accumulation_steps * args.num_train_epochs
 
     # Prepare optimizer and schedule (linear warmup and decay)
-    optimizer, scheduler = prepare_optimizer_and_scheduler(args, model, t_total)
+    optimizer, scheduler = prepare_optimizer_and_scheduler(
+        args, model, t_total)
 
     # Check if saved optimizer or scheduler states exist
     if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) \
@@ -140,7 +141,9 @@ def train(args, train_dataset, model, tokenizer):
             from apex import amp
         except ImportError:
             raise ImportError("No module apex")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
+        model, optimizer = amp.initialize(model,
+                                          optimizer,
+                                          opt_level=args.fp16_opt_level)
 
     # Logging for training!
     logging_train(args, len(train_dataset), t_total)
@@ -155,7 +158,9 @@ def train(args, train_dataset, model, tokenizer):
     model.zero_grad()
     seed_everything(args.seed)
     tr_loss, logging_loss = 0.0, 0.0
-    train_iterator = trange(epochs_trained, int(args.num_train_epochs), desc="Epoch")
+    train_iterator = trange(epochs_trained,
+                            int(args.num_train_epochs),
+                            desc="Epoch")
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc='Training')
         for step, batch in enumerate(epoch_iterator):
@@ -193,9 +198,11 @@ def train(args, train_dataset, model, tokenizer):
             tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(
+                        amp.master_params(optimizer), args.max_grad_norm)
                 else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(),
+                                                   args.max_grad_norm)
 
                 # Update learning rate schedule
                 optimizer.step()
@@ -205,8 +212,10 @@ def train(args, train_dataset, model, tokenizer):
 
                 # NOTE: logging train loss for **every batch**, notice that we use
                 # gradient accumulation here.
-                tb_writer.add_scalar("Train/lr", scheduler.get_lr()[0], global_step)
-                tb_writer.add_scalar("Train/loss", tr_loss - logging_loss, global_step)
+                tb_writer.add_scalar("Train/lr",
+                                     scheduler.get_lr()[0], global_step)
+                tb_writer.add_scalar("Train/loss", tr_loss - logging_loss,
+                                     global_step)
                 logging_loss = tr_loss
 
                 # NOTE: Evaluate while training
@@ -214,17 +223,20 @@ def train(args, train_dataset, model, tokenizer):
                     # Log metrics
                     results = evaluate(args, model, tokenizer)
                     for key, value in results.items():
-                        tb_writer.add_scalar("Eval/{}".format(key), value, global_step)
+                        tb_writer.add_scalar("Eval/{}".format(key), value,
+                                             global_step)
 
                 # NOTE: Save model
                 if args.save_steps > 0 and global_step % args.save_steps == 0:
                     # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir, "ckpt-{}".format(global_step))
+                    output_dir = os.path.join(args.output_dir,
+                                              "ckpt-{}".format(global_step))
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
 
                     # Take care of distributed/parallel training
-                    model_to_save = (model.module if hasattr(model, "module") else model)
+                    model_to_save = (model.module
+                                     if hasattr(model, "module") else model)
                     model_to_save.save_pretrained(output_dir)
                     tokenizer.save_pretrained(output_dir)
                     torch.save(args,
@@ -290,7 +302,8 @@ def evaluate(args, model, tokenizer, prefix=""):
 
             outputs = model(**inputs)
             tmp_eval_loss, logits = outputs[:2]
-            tags, _ = model.crf._viterbi_decode(logits, inputs['attention_mask'])
+            tags, _ = model.crf._viterbi_decode(logits,
+                                                inputs['attention_mask'])
             eval_loss += tmp_eval_loss.item()
 
         nb_eval_steps += 1
@@ -306,12 +319,12 @@ def evaluate(args, model, tokenizer, prefix=""):
             assert len(pred_label_ids) == len(true_label_ids)
             metric.update(y_true=true_label_ids, y_pred=pred_label_ids)
 
-
     eval_loss = eval_loss / nb_eval_steps
     results = metric.get_result()
     results['loss'] = eval_loss
     logger.info("***** Eval results %s *****", prefix)
-    info = "-".join([f' {key}: {value:.4f} ' for key, value in results.items()])
+    info = "-".join(
+        [f' {key}: {value:.4f} ' for key, value in results.items()])
     logger.info(info)
     return results
 
@@ -349,7 +362,8 @@ def predict(args, model, tokenizer, prefix=""):
                     batch[2] if args.model_type in ["bert", "xlnet"] else None)
             outputs = model(**inputs)
             logits = outputs[0]
-            preds, _ = model.crf._viterbi_decode(logits, inputs['attention_mask'])
+            preds, _ = model.crf._viterbi_decode(logits,
+                                                 inputs['attention_mask'])
 
         preds = preds[0][1:-1]  # [CLS]XXXX[SEP]
         label_entities = SeqEntityScore.get_entities(args.id2label, preds)
@@ -399,13 +413,15 @@ def load_and_cache_examples(args, tokenizer, mode='train'):
     # pylint: disable=not-callable
     # Load data features from cache or dataset file
     cached_file_name = 'cached_crf-{}_{}_{}'.format(
-            mode,
-            list(filter(None, args.model_name_or_path.split('/'))).pop(),
-            str(args.train_max_seq_length if mode == 'train' else args.eval_max_seq_length))
+        mode,
+        list(filter(None, args.model_name_or_path.split('/'))).pop(),
+        str(args.train_max_seq_length if mode ==
+            'train' else args.eval_max_seq_length))
     cached_features_file = os.path.join(args.data_dir, cached_file_name)
 
     if os.path.exists(cached_features_file) and not args.overwrite_cache:
-        logger.info("Loading features from cached file %s", cached_features_file)
+        logger.info("Loading features from cached file %s",
+                    cached_features_file)
         features = torch.load(cached_features_file)
     else:
         logger.info("Creating features from dataset file at %s", args.data_dir)
@@ -424,16 +440,22 @@ def load_and_cache_examples(args, tokenizer, mode='train'):
                     else args.eval_max_seq_length,
         )
 
-        logger.info("Saving features into cached file %s", cached_features_file)
+        logger.info("Saving features into cached file %s",
+                    cached_features_file)
         torch.save(features, cached_features_file)
 
     # Convert to Tensors and build dataset
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
-    all_label_ids = torch.tensor([f.label_ids for f in features], dtype=torch.long)
+    all_input_ids = torch.tensor([f.input_ids for f in features],
+                                 dtype=torch.long)
+    all_input_mask = torch.tensor([f.input_mask for f in features],
+                                  dtype=torch.long)
+    all_token_type_ids = torch.tensor([f.token_type_ids for f in features],
+                                      dtype=torch.long)
+    all_label_ids = torch.tensor([f.label_ids for f in features],
+                                 dtype=torch.long)
 
-    dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_ids, all_label_ids)
+    dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_ids,
+                            all_label_ids)
     return dataset
 
 
@@ -453,10 +475,12 @@ def main():
             "Use --overwrite_output_dir to overcome.")
 
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.device = device
 
-    logger.warning("Process device: %s, 16-bits training: %s", device, args.fp16)
+    logger.warning("Process device: %s, 16-bits training: %s", device,
+                   args.fp16)
 
     # Set seed
     seed_everything(args.seed)
@@ -531,8 +555,10 @@ def main():
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
         for checkpoint in checkpoints:
-            global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
-            prefix = checkpoint.split('/')[-1] if checkpoint.find('ckpt') != -1 else ""
+            global_step = checkpoint.split(
+                "-")[-1] if len(checkpoints) > 1 else ""
+            prefix = checkpoint.split(
+                '/')[-1] if checkpoint.find('ckpt') != -1 else ""
             model = model_class.from_pretrained(checkpoint,
                                                 config=config,
                                                 label2id=args.label2id,
