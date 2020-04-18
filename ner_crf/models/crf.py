@@ -252,7 +252,9 @@ class CRF(nn.Module):
 
             # limit the backpointers until the last but one
             # since the last corresponds to the sample_final_tag
-            sample_backpointers = backpointers[:sample_final_idx - 1]
+            # NOTE: we use sample_final_idx -2 because `backpointers`
+            # only record len_sentences - 3 pointers.
+            sample_backpointers = backpointers[:sample_final_idx - 2]
 
             # follow the backpointers to build the sequence of labels
             sample_path = self._find_best_path(i, sample_final_tag,
@@ -263,11 +265,11 @@ class CRF(nn.Module):
 
         return best_sequences, max_final_scores
 
-    def _find_best_path(self, batch_dix, best_tag, backpointers):
+    def _find_best_path(self, batch_idx, best_tag, backpointers):
         """Auxiliary function to find the best path sequence for a specific sample.
 
             Args:
-                batch_dix (int): sample index in the range [0, batch_size)
+                batch_idx (int): sample index in the range [0, batch_size)
                 best_tag (int): tag which maximizes the final score
                 backpointers (list of lists of tensors): list of pointers with
                 shape (seq_len_i-1, nb_labels, batch_size) where seq_len_i
@@ -284,7 +286,7 @@ class CRF(nn.Module):
         for backpointers_t in reversed(backpointers):
 
             # recover the best_tag at this timestep
-            best_tag = backpointers_t[best_tag][batch_dix].item()
+            best_tag = backpointers_t[best_tag][batch_idx].item()
 
             # append to the beginning of the list so we don't need to reverse it later
             best_path.insert(0, best_tag)
