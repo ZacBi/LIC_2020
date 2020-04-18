@@ -137,9 +137,6 @@ class CRF(nn.Module):
 
         batch_size, seq_length, num_labels = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
-        mask = mask.detach()
-        mask.requires_grad_(False)
-        mask[torch.arange(batch_size), last_valid_idx] = 0
 
         # NOTE: we don't need to calculate in the form of log_sum_exp
         # for the first valid token (not START token).
@@ -191,7 +188,6 @@ class CRF(nn.Module):
         """
         batch_size, seq_length, _ = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
-        mask[torch.arange(batch_size), last_valid_idx] = 0
 
         # In the first iteration, BOS will have all the scores and then, the max
         # NOTE: the alphas here is totoally different from the alphas in `_compute_log_partition`
