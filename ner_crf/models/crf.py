@@ -40,7 +40,7 @@ class CRF(nn.Module):
             self.transitions.data[:, self.PAD_TAG_ID] = -10000.0
             # except the end of sentence is reached
             # or we are already in a pad position
-            self.transitions.data[self.EOS_TAG_ID, self.PAD_TAG_ID] = 0.0
+            self.transitions.data[self.END_TAG_ID, self.PAD_TAG_ID] = 0.0
             self.transitions.data[self.PAD_TAG_ID, self.PAD_TAG_ID] = 0.0
 
     def forward(self, emissions, tags, mask=None):
@@ -102,6 +102,8 @@ class CRF(nn.Module):
         scores = []
         # save first and last tags to be used later
         last_valid_idx = mask.int().sum(1) - 1
+        zero = torch.zeros(1).long().to(mask.device)
+        mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
 
         # Iterate by batch
         # NOTE: actually, (for a sentence) transition score and emission socore,
@@ -137,6 +139,9 @@ class CRF(nn.Module):
 
         batch_size, seq_length, num_labels = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
+        zero = torch.zeros(1).long().to(mask.device)
+        mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
+
 
         # NOTE: we don't need to calculate in the form of log_sum_exp
         # for the first valid token (not START token).
@@ -188,10 +193,13 @@ class CRF(nn.Module):
         """
         batch_size, seq_length, _ = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
+        zero = torch.zeros(1).long().to(mask.device)
+        mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
+
 
         # In the first iteration, BOS will have all the scores and then, the max
         # NOTE: the alphas here is totoally different from the alphas in `_compute_log_partition`
-        alphas = self.transitions[self.BOS_TAG_ID].unsqueeze(0) \
+        alphas = self.transitions[self.START_TAG_ID].unsqueeze(0) \
                 + emissions[:, 1]
 
         backpointers = []
@@ -224,7 +232,7 @@ class CRF(nn.Module):
             backpointers.append(max_score_tags.t())
 
         # Add the scores for the final transition
-        last_transition = self.transitions[:, self.EOS_TAG_ID]
+        last_transition = self.transitions[:, self.END_TAG_ID]
         end_scores = alphas + last_transition.unsqueeze(0)
 
         # Get the final most probable score and the final most probable tag

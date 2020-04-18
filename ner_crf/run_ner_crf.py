@@ -213,8 +213,8 @@ def train(args, train_dataset, model, tokenizer):
 
                 # NOTE: logging train loss for **every batch**, notice that we use
                 # gradient accumulation here.
-                tb_writer.add_scalar("Train/lr",
-                                     scheduler.get_lr()[0], global_step)
+                tb_writer.add_scalar("Train/lr", scheduler.get_last_lr(),
+                                     global_step)
                 tb_writer.add_scalar("Train/loss", tr_loss - logging_loss,
                                      global_step)
                 logging_loss = tr_loss
