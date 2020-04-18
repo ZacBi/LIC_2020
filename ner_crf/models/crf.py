@@ -137,6 +137,7 @@ class CRF(nn.Module):
 
         batch_size, seq_length, num_labels = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
+        mask = mask.detach()
         mask[torch.arange(batch_size), last_valid_idx] = 0
 
         # NOTE: we don't need to calculate in the form of log_sum_exp
