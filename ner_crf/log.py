@@ -10,7 +10,7 @@ def logging_train(args: Dict, num_examples: int, total_steps: int):
     """Logging in train"""
 
     logger.info("***** Running training *****")
-    logger.info("  Num examples = %d", len(num_examples))
+    logger.info("  Num examples = %d", num_examples)
     logger.info("  Num Epochs = %d", args.num_train_epochs)
     logger.info("  Instantaneous batch size per GPU = %d",
                 args.per_gpu_train_batch_size)

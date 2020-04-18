@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 InputFeatures = namedtuple(
     'InputFeatures',
-    ['input_ids', 'input_mask', 'token_type_ids', 'label_ids', 'input_len'])
+    ['input_ids', 'input_mask', 'token_type_ids', 'label_ids'])
 
 Example = namedtuple('Example', [
     "id", "text_a", "label", "ori_text", "ori_2_new_index", "roles", "sentence"
@@ -26,14 +26,15 @@ def collate_fn(batch):
     batch should be a list of (sequence, target, length) tuples...
     Returns a padded tensor of sequences sorted from longest to shortest,
     """
-    all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels = map(
+    all_input_ids, all_attention_mask, all_token_type_ids, all_labels = map(
         torch.stack, zip(*batch))
-    max_len = max(all_lens).item()
+    all_lengths = all_attention_mask.sum(1)
+    max_len = torch.max(all_lengths)
     all_input_ids = all_input_ids[:, :max_len]
     all_attention_mask = all_attention_mask[:, :max_len]
     all_token_type_ids = all_token_type_ids[:, :max_len]
     all_labels = all_labels[:, :max_len]
-    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels, all_lens
+    return all_input_ids, all_attention_mask, all_token_type_ids, all_labels
 
 
 def _reseg_token_label(tokens, labels, tokenizer):

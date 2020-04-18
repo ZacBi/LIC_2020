@@ -40,6 +40,7 @@ from ner_crf.processors import (
     convert_examples_to_features,
 )
 
+torch.autograd.set_detect_anomaly(True)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys())
@@ -488,7 +489,7 @@ def main():
     # Prepare NER task
     args.label2id = get_label_map_by_file(args.label_map_config)
     args.label2id = args.label2id
-    args.id2label = {i: label for label, i in args.label2id.item()}
+    args.id2label = {i: label for label, i in args.label2id.items()}
     args.num_labels = len(args.label2id)
 
     # Load pretrained model and tokenizer
@@ -510,8 +511,7 @@ def main():
         from_tf=bool(".ckpt" in args.model_name_or_path),
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
-        label2id=args.label2id,
-        device=args.device)
+        label2id=args.label2id)
 
     model.to(args.device)
     logger.info("Training/evaluation parameters %s", args)

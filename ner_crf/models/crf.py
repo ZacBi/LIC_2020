@@ -98,9 +98,8 @@ class CRF(nn.Module):
                 Shape of (batch_size,)
         """
 
-        batch_size, _ = emissions.shape
-        scores = torch.zeros(batch_size, dtype=torch.float)
-
+        batch_size, *_ = emissions.shape
+        scores = []
         # save first and last tags to be used later
         last_valid_idx = mask.int().sum(1) - 1
 
@@ -109,14 +108,20 @@ class CRF(nn.Module):
         # can be calculated individually because they are just
         for batch_idx in range(batch_size):
             # transition score
-            t_score = torch.sum(
-                self.transitions[tags[batch_idx, :last_valid_idx],
-                                 tags[batch_idx, 1:last_valid_idx + 1]])
-            # emission score
-            e_score = emissions[tags[batch_idx, 1:last_valid_idx]].sum()
-            scores[batch_idx] = t_score + e_score
+            last_idx = last_valid_idx[batch_idx]
+            left_side = tags[batch_idx, :last_idx - 1]
+            right_side = tags[batch_idx, 1:last_idx]
+            t_score = torch.sum(self.transitions[left_side, right_side])
 
-        return scores
+            # emission score
+            e_score = torch.sum(emissions[batch_idx,
+                                          torch.arange(last_idx - 1),
+                                          tags[batch_idx, 1:last_idx]])
+
+            score = t_score + e_score
+            scores.append(score.unsqueeze(0))
+
+        return torch.cat(scores)
 
     def _compute_log_partition(self, emissions, mask):
         """Compute the partition function in log-space using the forward-algorithm.
@@ -163,7 +168,7 @@ class CRF(nn.Module):
             alphas = is_valid * new_alphas + (1 - is_valid) * alphas
 
         # add the scores for the final transition
-        last_transition = self.transitions[:, self.EOS_TAG_ID]
+        last_transition = self.transitions[:, self.END_TAG_ID]
         end_scores = alphas + last_transition.unsqueeze(0)
 
         # return a *log* of sums of exp
