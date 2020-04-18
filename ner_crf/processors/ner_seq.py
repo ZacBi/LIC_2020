@@ -88,18 +88,17 @@ def convert_examples_to_features(examples,
             tokens = tokens[:(max_seq_length - special_tokens_count)]
             labels = labels[:(max_seq_length - special_tokens_count)]
 
+        tokens = [tokenizer.cls_token] + tokens
+        labels = [tokenizer.cls_token] + labels
         tokens += [tokenizer.sep_token]
         labels += [tokenizer.sep_token]
 
-        tokens = [tokenizer.cls_token] + tokens
-        labels = [tokenizer.cls_token] + labels
-
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
         label_ids = [label2id[label] for label in labels]
-        token_type_ids = [0] * len(input_ids)
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         input_mask = [1] * len(input_ids)
+        token_type_ids = [0] * len(input_ids)
 
         # Zero-pad up to the sequence length.
         padding_length = max_seq_length - len(input_ids)

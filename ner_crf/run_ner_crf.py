@@ -303,8 +303,7 @@ def evaluate(args, model, tokenizer, prefix=""):
 
             outputs = model(**inputs)
             tmp_eval_loss, logits = outputs[:2]
-            tags, _ = model.crf._viterbi_decode(logits,
-                                                inputs['attention_mask'])
+            tags, _ = model.decode(logits, inputs['attention_mask'])
             eval_loss += tmp_eval_loss.item()
 
         nb_eval_steps += 1
@@ -363,8 +362,7 @@ def predict(args, model, tokenizer, prefix=""):
                     batch[2] if args.model_type in ["bert", "xlnet"] else None)
             outputs = model(**inputs)
             logits = outputs[0]
-            preds, _ = model.crf._viterbi_decode(logits,
-                                                 inputs['attention_mask'])
+            preds, _ = model.decode(logits, inputs['attention_mask'])
 
         preds = preds[0][1:-1]  # [CLS]XXXX[SEP]
         label_entities = SeqEntityScore.get_entities(args.id2label, preds)

@@ -35,3 +35,6 @@ class BertCRF(BertPreTrainedModel):
             loss = self.crf(logits, tags=labels, mask=attention_mask)
             outputs = (loss, ) + outputs
         return outputs  # (loss), scores
+
+    def decode(self, emissions, mask):
+        return self.crf.decode(emissions, mask)

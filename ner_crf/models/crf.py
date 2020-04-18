@@ -142,7 +142,6 @@ class CRF(nn.Module):
         zero = torch.zeros(1).long().to(mask.device)
         mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
 
-
         # NOTE: we don't need to calculate in the form of log_sum_exp
         # for the first valid token (not START token).
         # Don't worry about the sequence ['[CLS]', '[SEP]'] for adding emissions[:, 1]
@@ -178,6 +177,9 @@ class CRF(nn.Module):
         # return a *log* of sums of exp
         return torch.logsumexp(end_scores, dim=1)
 
+    def decode(self, emissions, mask):
+        return self._viterbi_decode(emissions, mask)
+
     def _viterbi_decode(self, emissions, mask):
         """Compute the viterbi algorithm to find the most probable sequence of labels
         given a sequence of emissions.
@@ -194,8 +196,8 @@ class CRF(nn.Module):
         batch_size, seq_length, _ = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
         zero = torch.zeros(1).long().to(mask.device)
+        # For bert whose tokens like ['[CLS]', xx, '[SEP]']
         mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
-
 
         # In the first iteration, BOS will have all the scores and then, the max
         # NOTE: the alphas here is totoally different from the alphas in `_compute_log_partition`
