@@ -4,21 +4,14 @@ from torch import nn
 
 
 class CRF(nn.Module):
-    def __init__(self,
-                 num_labels,
-                 start_tag_id,
-                 end_tag_id,
-                 pad_tag_id=None,
-                 batch_first=True):
+    def __init__(self, num_labels, start_tag_id, end_tag_id, batch_first=True):
         # pylint: disable=invalid-name
         super().__init__()
 
         self.num_labels = num_labels
         self.START_TAG_ID = start_tag_id
         self.END_TAG_ID = end_tag_id
-        self.PAD_TAG_ID = pad_tag_id
         self.batch_first = batch_first
-
         self.transitions = nn.Parameter(
             torch.empty(self.num_labels, self.num_labels))
         self._init_hidden()
@@ -30,18 +23,6 @@ class CRF(nn.Module):
         # no transitions allowed from the beginning of sentence
         # NOTE: it's a trick to use tensor[r] instead of tensor[r, :]
         self.transitions.data[self.END_TAG_ID] = -10000.
-
-        # NOTE: it's useless because we do not calculate the trans and emission
-        # score of pad tag id in forward func.
-        if self.PAD_TAG_ID is not None:
-            # no transitions from padding
-            self.transitions.data[self.PAD_TAG_ID, :] = -10000.0
-            # no transitions to padding
-            self.transitions.data[:, self.PAD_TAG_ID] = -10000.0
-            # except the end of sentence is reached
-            # or we are already in a pad position
-            self.transitions.data[self.END_TAG_ID, self.PAD_TAG_ID] = 0.0
-            self.transitions.data[self.PAD_TAG_ID, self.PAD_TAG_ID] = 0.0
 
     def forward(self, emissions, tags, mask=None):
         """Compute the negative log-likelihood. See `log_likelihood` method."""
@@ -80,9 +61,9 @@ class CRF(nn.Module):
             mask = torch.ones(emissions.shape[:2], dtype=torch.float)
 
         scores = self._compute_scores(emissions, tags, mask=mask)
-        partition = self._compute_log_partition(emissions, mask=mask)
+        log_partition = self._compute_log_partition(emissions, mask=mask)
 
-        return torch.sum(scores - partition)
+        return torch.sum(scores - log_partition)
 
     def _compute_scores(self, emissions: torch.Tensor, tags: torch.Tensor,
                         mask: torch.FloatTensor):
@@ -100,7 +81,7 @@ class CRF(nn.Module):
 
         batch_size, *_ = emissions.shape
         scores = []
-        # save first and last tags to be used later
+        # In BERT, last_valid_idx is the idx for label '[SEP]' in each label sequence.
         last_valid_idx = mask.int().sum(1) - 1
         zero = torch.zeros(1).long().to(mask.device)
         mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
@@ -109,15 +90,14 @@ class CRF(nn.Module):
         # NOTE: actually, (for a sentence) transition score and emission socore,
         # can be calculated individually because they are just
         for batch_idx in range(batch_size):
-            # transition score
             last_idx = last_valid_idx[batch_idx]
-            left_side = tags[batch_idx, :last_idx - 1]
-            right_side = tags[batch_idx, 1:last_idx]
+            left_side = tags[batch_idx, :last_idx]
+            right_side = tags[batch_idx, 1:last_idx + 1]
+            # Transition score
             t_score = torch.sum(self.transitions[left_side, right_side])
-
-            # emission score
+            # Don't calculate the emission score for '[CLS]' and '[SEP]'
             e_score = torch.sum(emissions[batch_idx,
-                                          torch.arange(last_idx - 1),
+                                          torch.arange(1, last_idx),
                                           tags[batch_idx, 1:last_idx]])
 
             score = t_score + e_score
@@ -145,9 +125,8 @@ class CRF(nn.Module):
         # NOTE: we don't need to calculate in the form of log_sum_exp
         # for the first valid token (not START token).
         # Don't worry about the sequence ['[CLS]', '[SEP]'] for adding emissions[:, 1]
-        # into `alphas`, we don't predict empty sequence.
-        alphas = self.transitions[self.START_TAG_ID].expand(
-            batch_size, num_labels) + emissions[:, 1]
+        # into `alphas`, we don't predict for empty sequence.
+        alphas = self.transitions[self.START_TAG_ID] + emissions[:, 1]
 
         # Here we iterate by sequence length
         # However, iterate by batch index is more readable in <<统计学习方法>>.
@@ -170,7 +149,7 @@ class CRF(nn.Module):
             is_valid = mask[:, seq_idx].unsqueeze(-1)
             alphas = is_valid * new_alphas + (1 - is_valid) * alphas
 
-        # add the scores for the final transition
+        # Add the scores for the final transition
         last_transition = self.transitions[:, self.END_TAG_ID]
         end_scores = alphas + last_transition.unsqueeze(0)
 

@@ -3,7 +3,6 @@
 import glob
 import logging
 import os
-import json
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -14,6 +13,7 @@ from torch.utils.data import (
     TensorDataset,
 )
 
+from tqdm import tqdm, trange
 from transformers import (
     WEIGHTS_NAME,
     MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
@@ -22,17 +22,11 @@ from transformers import (
     BertTokenizer,
     get_linear_schedule_with_warmup,
 )
-from tqdm import tqdm, trange
 
-from ner_crf.utils import (
-    json_to_text,
-    seed_everything,
-    get_label_map_by_file,
-)
-
+from ner_crf.args import get_args
 from ner_crf.models import BertCRF
 from ner_crf.metrics import SeqEntityScore
-from ner_crf.args import get_args
+from ner_crf.utils import seed_everything, get_label_map_by_file
 from ner_crf.log import logging_train, logging_continuing_training
 from ner_crf.processors import (
     CluenerProcessor,
@@ -102,6 +96,36 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     return optimizer, scheduler
 
 
+def save_model(args, model, tokenizer, optimizer, scheduler, global_step):
+    # Save model checkpoint
+    output_dir = os.path.join(args.output_dir, "ckpt-{}".format(global_step))
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Take care of distributed/parallel training
+    model_to_save = (model.module if hasattr(model, "module") else model)
+    model_to_save.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    torch.save(args, os.path.join(output_dir, "training_args.bin"))
+    logger.info("Saving model checkpoint to %s", output_dir)
+    torch.save(optimizer.state_dict(), os.path.join(output_dir,
+                                                    "optimizer.pt"))
+    torch.save(scheduler.state_dict(), os.path.join(output_dir,
+                                                    "scheduler.pt"))
+    logger.info("Saving optimizer and scheduler states to %s", output_dir)
+
+
+def fp16_train(args, model, optimizer):
+    try:
+        from apex import amp
+    except ImportError:
+        raise ImportError("No module apex")
+    model, optimizer = amp.initialize(model,
+                                      optimizer,
+                                      opt_level=args.fp16_opt_level)
+    return model, optimizer
+
+
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
     tb_writer = SummaryWriter()
@@ -138,30 +162,35 @@ def train(args, train_dataset, model, tokenizer):
 
     # Set for fp16 training
     if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("No module apex")
-        model, optimizer = amp.initialize(model,
-                                          optimizer,
-                                          opt_level=args.fp16_opt_level)
+        model, optimizer = fp16_train(args, model, optimizer)
 
     # Logging for training!
     logging_train(args, len(train_dataset), t_total)
-    # NOTE: Check if continuing training from a checkpoint
-    logging_continuing_training(args, len(train_dataloader))
 
     global_step = 0
     epochs_trained = 0
     steps_trained_in_current_epoch = 0
+    # NOTE: Check if continuing training from a checkpoint
+    if os.path.exists(args.model_name_or_path) \
+                and "ckpt" in args.model_name_or_path:
+        # set global_step to global_step of last saved checkpoint from model path
+        global_step = int(args.model_name_or_path.split("-")[-1].split("/")[0])
+        num_batchs = len(train_dataloader) // args.gradient_accumulation_steps
+        epochs_trained = global_step // num_batchs
+        steps_trained_in_current_epoch = global_step % num_batchs
+        logging_continuing_training(args, epochs_trained, global_step,
+                                    steps_trained_in_current_epoch)
 
     # NOTE: begin training
     model.zero_grad()
     seed_everything(args.seed)
     tr_loss, logging_loss = 0.0, 0.0
-    train_iterator = trange(epochs_trained,
-                            int(args.num_train_epochs),
-                            desc="Epoch")
+    train_iterator = trange(
+        epochs_trained,
+        int(args.num_train_epochs),
+        desc="Epoch",
+    )
+
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc='Training')
         for step, batch in enumerate(epoch_iterator):
@@ -172,18 +201,12 @@ def train(args, train_dataset, model, tokenizer):
 
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
-            # NOTE: add input_lens for every examples
             inputs = {
                 "input_ids": batch[0],
                 "attention_mask": batch[1],
                 "labels": batch[3],
             }
-            if args.model_type != "distilbert":
-                # XLM and RoBERTa don"t use segment_ids
-                inputs["token_type_ids"] = (
-                    batch[2] if args.model_type in ["bert", "xlnet"] else None)
 
-            # NOTE: model outputs are always tuple in transformers (see doc)
             outputs = model(**inputs)
             loss = outputs[0]
 
@@ -221,7 +244,6 @@ def train(args, train_dataset, model, tokenizer):
 
                 # NOTE: Evaluate while training
                 if args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                    # Log metrics
                     results = evaluate(args, model, tokenizer)
                     for key, value in results.items():
                         tb_writer.add_scalar("Eval/{}".format(key), value,
@@ -229,26 +251,8 @@ def train(args, train_dataset, model, tokenizer):
 
                 # NOTE: Save model
                 if args.save_steps > 0 and global_step % args.save_steps == 0:
-                    # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir,
-                                              "ckpt-{}".format(global_step))
-                    if not os.path.exists(output_dir):
-                        os.makedirs(output_dir)
-
-                    # Take care of distributed/parallel training
-                    model_to_save = (model.module
-                                     if hasattr(model, "module") else model)
-                    model_to_save.save_pretrained(output_dir)
-                    tokenizer.save_pretrained(output_dir)
-                    torch.save(args,
-                               os.path.join(output_dir, "training_args.bin"))
-                    logger.info("Saving model checkpoint to %s", output_dir)
-                    torch.save(optimizer.state_dict(),
-                               os.path.join(output_dir, "optimizer.pt"))
-                    torch.save(scheduler.state_dict(),
-                               os.path.join(output_dir, "scheduler.pt"))
-                    logger.info("Saving optimizer and scheduler states to %s",
-                                output_dir)
+                    save_model(args, model, tokenizer, optimizer, scheduler,
+                               global_step)
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -327,85 +331,6 @@ def evaluate(args, model, tokenizer, prefix=""):
         [f' {key}: {value:.4f} ' for key, value in results.items()])
     logger.info(info)
     return results
-
-
-def predict(args, model, tokenizer, prefix=""):
-    pred_output_dir = args.output_dir
-    if not os.path.exists(pred_output_dir):
-        os.makedirs(pred_output_dir)
-    test_dataset = load_and_cache_examples(args, tokenizer, mode='test')
-    # Note that DistributedSampler samples randomly
-    test_sampler = SequentialSampler(test_dataset)
-    test_dataloader = DataLoader(test_dataset,
-                                 sampler=test_sampler,
-                                 batch_size=1,
-                                 collate_fn=collate_fn)
-    # Eval!
-    logger.info("***** Running prediction %s *****", prefix)
-    logger.info("  Num examples = %d", len(test_dataset))
-    logger.info("  Batch size = %d", 1)
-
-    results = []
-    test_iterator = tqdm(test_dataloader, desc='Inference')
-    for step, batch in enumerate(test_iterator):
-        model.eval()
-        batch = tuple(t.to(args.device) for t in batch)
-        with torch.no_grad():
-            inputs = {
-                "input_ids": batch[0],
-                "attention_mask": batch[1],
-                "labels": None,
-            }
-            if args.model_type != "distilbert":
-                # XLM and RoBERTa don"t use segment_ids
-                inputs["token_type_ids"] = (
-                    batch[2] if args.model_type in ["bert", "xlnet"] else None)
-            outputs = model(**inputs)
-            logits = outputs[0]
-            preds, _ = model.decode(logits, inputs['attention_mask'])
-
-        preds = preds[0][1:-1]  # [CLS]XXXX[SEP]
-        label_entities = SeqEntityScore.get_entities(args.id2label, preds)
-        json_d = {}
-        json_d['id'] = step
-        json_d['tag_seq'] = " ".join(preds)
-        json_d['entities'] = label_entities
-        results.append(json_d)
-
-    output_predict_file = os.path.join(pred_output_dir, prefix,
-                                       "test_prediction.json")
-    output_submit_file = os.path.join(pred_output_dir, prefix,
-                                      "test_submit.json")
-    with open(output_predict_file, "w") as writer:
-        for record in results:
-            writer.write(json.dumps(record) + '\n')
-    test_text = []
-    with open(os.path.join(args.data_dir, "test.json"), 'r') as f_obj:
-        for line in f_obj:
-            test_text.append(json.loads(line))
-    test_submit = []
-    for truth, res in zip(test_text, results):
-        json_d = {}
-        json_d['id'] = truth['id']
-        json_d['label'] = {}
-        entities = res['entities']
-        words = list(truth['text'])
-        if entities:
-            for subject in entities:
-                tag = subject[0]
-                start = subject[1]
-                end = subject[2]
-                word = "".join(words[start:end + 1])
-                if tag in json_d['label']:
-                    if word in json_d['label'][tag]:
-                        json_d['label'][tag][word].append([start, end])
-                    else:
-                        json_d['label'][tag][word] = [[start, end]]
-                else:
-                    json_d['label'][tag] = {}
-                    json_d['label'][tag][word] = [[start, end]]
-        test_submit.append(json_d)
-    json_to_text(output_submit_file, test_submit)
 
 
 def load_and_cache_examples(args, tokenizer, mode='train'):
@@ -573,32 +498,6 @@ def main():
         with open(output_eval_file, "w") as writer:
             for key in sorted(results.keys()):
                 writer.write("{} = {}\n".format(key, str(results[key])))
-
-    if args.do_predict:
-        tokenizer = tokenizer_class.from_pretrained(
-            args.output_dir, do_lower_case=args.do_lower_case)
-        checkpoints = [args.output_dir]
-        if args.predict_checkpoints > 0:
-            checkpoints = list(
-                os.path.dirname(c) for c in sorted(
-                    glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME,
-                              recursive=True)))
-            logging.getLogger("transformers.modeling_utils").setLevel(
-                logging.WARN)  # Reduce logging
-            checkpoints = [
-                ckpt for ckpt in checkpoints
-                if ckpt.split('-')[-1] == str(args.predict_checkpoints)
-            ]
-        logger.info("Predict the following checkpoints: %s", checkpoints)
-        for checkpoint in checkpoints:
-            prefix = checkpoint.split(
-                '/')[-1] if checkpoint.find('ckpt') != -1 else ""
-            model = model_class.from_pretrained(checkpoint,
-                                                config=config,
-                                                label2id=args.label2id,
-                                                device=args.device)
-            model.to(args.device)
-            predict(args, model, tokenizer, prefix=prefix)
 
 
 if __name__ == "__main__":

@@ -29,10 +29,10 @@ class BertCRF(BertPreTrainedModel):
         outputs = self.bert(input_ids, token_type_ids, attention_mask)
         sequence_output = outputs[0]
         sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)
-        outputs = (logits, )
+        emissions = self.classifier(sequence_output)
+        outputs = (emissions, )
         if labels is not None:
-            loss = self.crf(logits, tags=labels, mask=attention_mask)
+            loss = self.crf(emissions, tags=labels, mask=attention_mask)
             outputs = (loss, ) + outputs
         return outputs  # (loss), scores
 
