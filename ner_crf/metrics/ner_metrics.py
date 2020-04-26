@@ -1,4 +1,3 @@
-# pylint: disable=bad-continuation
 from seqeval.metrics import f1_score, precision_score, recall_score
 from seqeval.metrics.sequence_labeling import get_entities
 

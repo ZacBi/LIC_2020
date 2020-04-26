@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# pylint: disable=bad-continuation
 """
 处理样本样本数据作为训练以及处理schema
 """

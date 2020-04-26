@@ -1,8 +1,5 @@
-# pylint: disable=bad-continuation
-
-import glob
-import logging
 import os
+import logging
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -15,7 +12,6 @@ from torch.utils.data import (
 
 from tqdm import tqdm, trange
 from transformers import (
-    WEIGHTS_NAME,
     MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
     AdamW,
     BertConfig,
@@ -23,11 +19,16 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from ner_crf.args import get_args
 from ner_crf.models import BertCRF
 from ner_crf.metrics import SeqEntityScore
-from ner_crf.utils import seed_everything, get_label_map_by_file
-from ner_crf.log import logging_train, logging_continuing_training
+from ner_crf.utils import (
+    get_args,
+    save_model,
+    logging_train,
+    seed_everything,
+    get_label_map_by_file,
+    logging_continuing_training,
+)
 from ner_crf.processors import (
     CluenerProcessor,
     collate_fn,
@@ -96,36 +97,6 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     return optimizer, scheduler
 
 
-def save_model(args, model, tokenizer, optimizer, scheduler, global_step):
-    # Save model checkpoint
-    output_dir = os.path.join(args.output_dir, "ckpt-{}".format(global_step))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Take care of distributed/parallel training
-    model_to_save = (model.module if hasattr(model, "module") else model)
-    model_to_save.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    torch.save(args, os.path.join(output_dir, "training_args.bin"))
-    logger.info("Saving model checkpoint to %s", output_dir)
-    torch.save(optimizer.state_dict(), os.path.join(output_dir,
-                                                    "optimizer.pt"))
-    torch.save(scheduler.state_dict(), os.path.join(output_dir,
-                                                    "scheduler.pt"))
-    logger.info("Saving optimizer and scheduler states to %s", output_dir)
-
-
-def fp16_train(args, model, optimizer):
-    try:
-        from apex import amp
-    except ImportError:
-        raise ImportError("No module apex")
-    model, optimizer = amp.initialize(model,
-                                      optimizer,
-                                      opt_level=args.fp16_opt_level)
-    return model, optimizer
-
-
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
     tb_writer = SummaryWriter()
@@ -160,16 +131,10 @@ def train(args, train_dataset, model, tokenizer):
         scheduler.load_state_dict(
             torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
 
-    # Set for fp16 training
-    if args.fp16:
-        model, optimizer = fp16_train(args, model, optimizer)
-
     # Logging for training!
     logging_train(args, len(train_dataset), t_total)
 
-    global_step = 0
-    epochs_trained = 0
-    steps_trained_in_current_epoch = 0
+    global_step = epochs_trained = steps_trained_in_current_epoch = 0
     # NOTE: Check if continuing training from a checkpoint
     if os.path.exists(args.model_name_or_path) \
                 and "ckpt" in args.model_name_or_path:
@@ -184,12 +149,10 @@ def train(args, train_dataset, model, tokenizer):
     # NOTE: begin training
     model.zero_grad()
     seed_everything(args.seed)
-    tr_loss, logging_loss = 0.0, 0.0
-    train_iterator = trange(
-        epochs_trained,
-        int(args.num_train_epochs),
-        desc="Epoch",
-    )
+    tr_loss = logging_loss = 0.0
+    train_iterator = trange(epochs_trained,
+                            int(args.num_train_epochs),
+                            desc="Epoch")
 
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc='Training')
@@ -206,6 +169,10 @@ def train(args, train_dataset, model, tokenizer):
                 "attention_mask": batch[1],
                 "labels": batch[3],
             }
+            if args.model_type != "distilbert":
+                # XLM and RoBERTa don"t use segment_ids
+                inputs["token_type_ids"] = (
+                    batch[2] if args.model_type in ["bert", "xlnet"] else None)
 
             outputs = model(**inputs)
             loss = outputs[0]
@@ -213,20 +180,11 @@ def train(args, train_dataset, model, tokenizer):
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-
+            loss.backward()
             tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(
-                        amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(),
-                                                   args.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(model.parameters(),
+                                               args.max_grad_norm)
 
                 # Update learning rate schedule
                 optimizer.step()
@@ -246,7 +204,7 @@ def train(args, train_dataset, model, tokenizer):
                 if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     results = evaluate(args, model, tokenizer)
                     for key, value in results.items():
-                        tb_writer.add_scalar("Eval/{}".format(key), value,
+                        tb_writer.add_scalar("Eval/{:.4f}".format(key), value,
                                              global_step)
 
                 # NOTE: Save model
@@ -399,19 +357,16 @@ def main():
             "Use --overwrite_output_dir to overcome.")
 
     # Set device
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-    args.device = device
-
-    logger.warning("Process device: %s, 16-bits training: %s", device,
-                   args.fp16)
+    device = "cuda" if torch.cuda.is_available() \
+                and not args.no_cuda else "cpu"
+    args.device = torch.device(device)
+    logger.warning("Process device: %s", args.device)
 
     # Set seed
     seed_everything(args.seed)
 
     # Prepare NER task
     args.label2id = get_label_map_by_file(args.label_map_config)
-    args.label2id = args.label2id
     args.id2label = {i: label for label, i in args.label2id.items()}
     args.num_labels = len(args.label2id)
 
@@ -438,66 +393,23 @@ def main():
 
     model.to(args.device)
     logger.info("Training/evaluation parameters %s", args)
-    # NOTE: Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, tokenizer, mode='train')
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
-        logger.info(" global_step = %s, average loss = %s", global_step,
+        logger.info("global_step = %s, average loss = %s", global_step,
                     tr_loss)
 
     # Saving best-practices: if you use defaults names for the model,
     # you can reload it using from_pretrained()
-    if args.do_train:
-        # Create output directory if needed
-        if not os.path.exists(args.output_dir):
-            os.makedirs(args.output_dir)
-        logger.info("Saving model checkpoint to %s", args.output_dir)
-        # Save a trained model, configuration and tokenizer using `save_pretrained()`.
-        # They can then be reloaded using `from_pretrained()`
-        model_to_save = (model.module if hasattr(model, "module") else model
-                         )  # Take care of distributed/parallel training
-        model_to_save.save_pretrained(args.output_dir)
-        tokenizer.save_vocabulary(args.output_dir)
-        # Good practice: save your training arguments together with the trained model
-        torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-
-    # Evaluation
-    results = {}
-    if args.do_eval:
-        tokenizer = tokenizer_class.from_pretrained(
-            args.output_dir, do_lower_case=args.do_lower_case)
-
-        checkpoints = [args.output_dir]
-        if args.eval_all_checkpoints:
-            checkpoints = list(
-                os.path.dirname(c) for c in sorted(
-                    glob.glob(args.output_dir + "/**/" + WEIGHTS_NAME,
-                              recursive=True)))
-            logging.getLogger("pytorch_transformers.modeling_utils").setLevel(
-                logging.WARN)  # Reduce logging
-
-        logger.info("Evaluate the following checkpoints: %s", checkpoints)
-        for checkpoint in checkpoints:
-            global_step = checkpoint.split(
-                "-")[-1] if len(checkpoints) > 1 else ""
-            prefix = checkpoint.split(
-                '/')[-1] if checkpoint.find('ckpt') != -1 else ""
-            model = model_class.from_pretrained(checkpoint,
-                                                config=config,
-                                                label2id=args.label2id,
-                                                device=args.device)
-            model.to(args.device)
-            result = evaluate(args, model, tokenizer, prefix=prefix)
-            if global_step:
-                result = {
-                    "{}_{}".format(global_step, k): v
-                    for k, v in result.items()
-                }
-            results.update(result)
-        output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            for key in sorted(results.keys()):
-                writer.write("{} = {}\n".format(key, str(results[key])))
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+    logger.info("Saving model checkpoint to %s", args.output_dir)
+    # Take care of distributed/parallel training
+    model_to_save = (model.module if hasattr(model, "module") else model)
+    model_to_save.save_pretrained(args.output_dir)
+    tokenizer.save_vocabulary(args.output_dir)
+    # Good practice: save your training arguments together with the trained model
+    torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
 
 if __name__ == "__main__":

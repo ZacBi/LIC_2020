@@ -1,5 +1,4 @@
 """ Named entity recognition fine-tuning: utilities to work with CLUENER task. """
-# pylint: disable=bad-continuation
 
 import os
 import json
@@ -7,8 +6,8 @@ import logging
 from collections import namedtuple
 
 import torch
-from ner_crf.processors.utils_ner import DataProcessor
-from ner_crf.tokenizer import whitespace_tokenize
+from ner_crf.processors.DataProcessor import DataProcessor
+from ner_crf.utils import whitespace_tokenize
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 

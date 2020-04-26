@@ -1,4 +1,3 @@
-# pylint: disable=bad-continuation
 import logging
 from typing import Dict
 

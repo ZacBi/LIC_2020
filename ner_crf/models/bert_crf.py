@@ -1,5 +1,3 @@
-# pylint: disable=bad-continuation
-
 from torch import nn
 from transformers import BertPreTrainedModel
 from transformers import BertModel
@@ -19,13 +17,11 @@ class BertCRF(BertPreTrainedModel):
         )
         self.init_weights()
 
-    def forward(
-        self,
-        input_ids,
-        token_type_ids=None,
-        attention_mask=None,
-        labels=None,
-    ):
+    def forward(self,
+                input_ids,
+                token_type_ids=None,
+                attention_mask=None,
+                labels=None):
         outputs = self.bert(input_ids, token_type_ids, attention_mask)
         sequence_output = outputs[0]
         sequence_output = self.dropout(sequence_output)

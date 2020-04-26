@@ -1,4 +1,3 @@
-# pylint: disable=bad-continuation
 import torch
 from torch import nn
 
@@ -117,7 +116,7 @@ class CRF(nn.Module):
                 Shape of (batch_size,)
         """
 
-        batch_size, seq_length, num_labels = emissions.shape
+        batch_size, seq_length, _ = emissions.shape
         last_valid_idx = mask.int().sum(1) - 1
         zero = torch.zeros(1).long().to(mask.device)
         mask = mask.index_put((torch.arange(batch_size), last_valid_idx), zero)
