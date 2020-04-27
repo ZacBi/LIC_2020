@@ -138,7 +138,7 @@ class CRF(nn.Module):
             # (num_labels, num_labels) -> (1, num_labels, num_labels)
             t_scores = self.transitions.unsqueeze(0)
 
-            # (bs, num_labels)  -> (bs, num_labels, 1)
+            # (bs, num_labels) -> (bs, num_labels, 1)
             a_scores = alphas.unsqueeze(2)
 
             # Set alphas if the mask is valid, otherwise keep the current values

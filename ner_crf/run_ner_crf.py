@@ -64,6 +64,7 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     """
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
+
     optimizer_grouped_parameters = [
         {
             "params": [
@@ -82,6 +83,11 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
             0.0
         },
     ]
+    if getattr(model, 'crf'):
+        optimizer_grouped_parameters.append({
+            "params": model.crf.named_parameters,
+            "lr": args.crf_learning_rate
+        })
 
     optimizer = AdamW(
         optimizer_grouped_parameters,
@@ -91,7 +97,7 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
 
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=args.warmup_steps,
+        num_warmup_steps=args.warmup_ratio * t_total,
         num_training_steps=t_total)
 
     return optimizer, scheduler

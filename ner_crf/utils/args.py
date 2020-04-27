@@ -122,9 +122,13 @@ def get_args():
         "Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument("--learning_rate",
-                        default=5e-5,
+                        default=3e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
+    parser.add_argument("--crf_learning_rate",
+                        default=0.2,
+                        type=float,
+                        help="Learning rate for CRF layer.")
     parser.add_argument("--weight_decay",
                         default=0.0,
                         type=float,
@@ -146,16 +150,17 @@ def get_args():
         default=-1,
         type=int,
         help=
-        "If > 0: set total number of training steps to perform. Override num_train_epochs.",
+        "If > 0: set total number of training steps to perform. "
+        "Override num_train_epochs.",
     )
 
-    parser.add_argument("--warmup_steps",
-                        default=0,
-                        type=int,
-                        help="Linear warmup over warmup_steps.")
+    parser.add_argument("--warmup_ratio",
+                        default=0.,
+                        type=float,
+                        help="Linear warmup over warmup steps.")
     parser.add_argument("--logging_steps",
                         type=int,
-                        default=50,
+                        default=100,
                         help="Log every X updates steps.")
     parser.add_argument("--save_steps",
                         type=int,
