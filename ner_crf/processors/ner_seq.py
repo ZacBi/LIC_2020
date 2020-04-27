@@ -6,7 +6,7 @@ import logging
 from collections import namedtuple
 
 import torch
-from ner_crf.processors.DataProcessor import DataProcessor
+from transformers.data.processors.utils import DataProcessor
 from ner_crf.utils import whitespace_tokenize
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -141,6 +141,9 @@ class CluenerProcessor(DataProcessor):
         """See base class."""
         return self._create_examples(
             self._read_json(os.path.join(data_dir, "test.json")), "test")
+
+    def get_example_from_tensor_dict(self, tensor_dict):
+        pass
 
     # FIXME: dynamic generate labels
     def get_labels(self, label_vocab):
