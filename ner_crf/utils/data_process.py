@@ -3,11 +3,16 @@
 """
 处理样本样本数据作为训练以及处理schema
 """
+import os
 import sys
 import json
 import random
-
+import logging
+from collections import defaultdict
+import matplotlib.pyplot as plt
 from ner_crf.utils import utils_lic
+
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 def schema_event_type_process():
@@ -108,12 +113,151 @@ def origin_events_process():
         utils_lic.write_by_lines(u"{}/train.json".format(save_dir), output)
 
 
+def statistic():
+    """Observe the data distution in dataset.
+
+    Statistic:
+        1. 每一短句事件数量分布
+        2. 每一类型(event_type)数量分布
+        3. argument overlap(同一事件类型论元多角色, 不同事件类型论元多角色)
+        4. 论元角色数量匹配schema程度
+    """
+    fpath = '/mnt/d/Workspace/Github/mine/LIC_2020/data/ori_datasets/train.json'
+    schema_path = '/mnt/d/Workspace/Github/mine/LIC_2020/data/ori_datasets/event_schema.json'
+
+    # Construct schema
+    schema = {}
+    lines = utils_lic.read_by_lines(schema_path)
+    for line in lines:
+        j_obj = json.loads(line)
+        if line in j_obj:
+            continue
+        schema[j_obj['event_type']] = j_obj
+
+    # dist: distribution
+    empty_argument_ids = []
+    sent_count = event_count = inner_overlap = 0
+    cross_overlap = defaultdict(int)
+    event_list_len_dist = defaultdict(int)
+    event_type_num_dist = defaultdict(int)
+    match_dist = {'match': 0, 'not_match': 0}
+    loose_match_dist = {'match': 0, 'not_match': 0}
+    lines = utils_lic.read_by_lines(fpath)
+    for line in lines:
+        sent_count += 1
+        j_obj = json.loads(line)
+        # Distribution of the num of event per sentence
+        event_list_len_dist[len(j_obj['event_list'])] += 1
+        for event in j_obj['event_list']:
+            event_count += 1
+            event_type = event['event_type']
+            # Distribution of num of event type
+            event_type_num_dist[event_type] += 1
+            num_schema_event_role = len(schema[event_type]['role_list'])
+            num_sent_event_role = len(event['arguments'])
+
+            # Strict match
+            if num_schema_event_role == num_sent_event_role:
+                match_dist['match'] += 1
+            else:
+                match_dist['not_match'] += 1
+
+            # Loose match don't count for `time` field
+            num_arg_no_time = num_sent_event_role
+            if any(arg['role'] == '时间' for arg in event['arguments']):
+                num_arg_no_time -= 1
+            if num_schema_event_role - 1 == num_arg_no_time:
+                loose_match_dist['match'] += 1
+            else:
+                loose_match_dist['not_match'] += 1
+
+        # NOTE: Check for argument overlap
+        s1_count, s2_count = check_argument_overlap(
+            j_obj['id'],
+            len(j_obj['text']),
+            j_obj['event_list'],
+            empty_argument_ids,
+        )
+        inner_overlap += s1_count
+        for key, val in s2_count.items():
+            cross_overlap[key] += val
+
+    # Count the num of each event class
+    event_class_num_dist = defaultdict(int)
+    for event_type, val in event_type_num_dist.items():
+        event_class = event_type.split('-')[0]
+        event_class_num_dist[event_class] += val
+
+    res = {
+        'sent_count': sent_count,
+        'event_count': event_count,
+        'event_list_len': dict(event_list_len_dist),
+        'event_type_num': dict(event_type_num_dist),
+        'event_class_num': dict(event_class_num_dist),
+        'strict_role_match': dict(match_dist),
+        'loose_role_match': dict(loose_match_dist),
+        'inner_arg_overlap': inner_overlap,
+        'cross_arg_overlap': dict(cross_overlap),
+        'empty_argument_ids': list(set(empty_argument_ids)),
+    }
+    dirname = os.path.dirname(fpath)
+    with open(os.path.join(dirname, 'train_dist.json'), 'w') as f_obj:
+        f_obj.write(json.dumps(res, ensure_ascii=False))
+
+
+# TODO: Find overlap by span.
+def check_argument_overlap(text_id, len_sent, event_list, empty_argument_ids):
+    """Check for argument overlap
+
+    Type of argument overlap:
+        1. one argument play more than one role in a sentence.
+        2. one argument play more than one role in different sentences.
+
+    Returns:
+        s1_count (int): count for situation 1.
+        s2_count (defaultdict): count for situation 2.
+
+    NOTE: Take argument 'time' for consideration and just think about index.
+    """
+    states = []
+    s1_count = max_idx = 0
+    s2_count = defaultdict(int)
+
+    if not event_list:
+        logger.warning("%s has empty event list.", text_id)
+
+    # Check foe situation 1
+    for event in event_list:
+        state = 0
+        idx_group = list(a['argument_start_index'] for a in event['arguments'])
+
+        if not idx_group:
+            logger.warning("%s has empty arguments.", text_id)
+            empty_argument_ids.append(text_id)
+            continue
+
+        max_idx = max(max(idx_group), max_idx)
+        if len(idx_group) != len(set(idx_group)):
+            s1_count += 1
+        for idx in idx_group:
+            state ^= 1 << idx
+        states.append(state)
+
+    # Check for situation 2
+    for idx in range(max_idx):
+        sum_ = sum((state >> idx) & 1 for state in states)
+        if sum_ > 1:
+            s2_count[sum_] += 1
+    return s1_count, s2_count
+
+
 def run(func_name=None):
     """main"""
     func_mapping = {
         "origin_events_process": origin_events_process,
         "schema_event_type_process": schema_event_type_process,
-        "schema_role_process": schema_role_process
+        "schema_role_process": schema_role_process,
+        "statistic": statistic
     }
     func_name = sys.argv[1]
     if func_name not in func_mapping:
@@ -123,4 +267,4 @@ def run(func_name=None):
 
 
 if __name__ == '__main__':
-    run()
+    statistic()

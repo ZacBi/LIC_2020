@@ -68,16 +68,16 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     optimizer_grouped_parameters = [
         {
             "params": [
-                p for n, p in model.named_parameters()
-                if not any(nd in n for nd in no_decay)
+                p for n, p in model.bert.named_parameters()
+                if not any(nd in n for nd in no_decay) and 'crf' not in n
             ],
             "weight_decay":
             args.weight_decay,
         },
         {
             "params": [
-                p for n, p in model.named_parameters()
-                if any(nd in n for nd in no_decay)
+                p for n, p in model.bert.named_parameters()
+                if any(nd in n for nd in no_decay) and 'crf' not in n
             ],
             "weight_decay":
             0.0
@@ -85,8 +85,9 @@ def prepare_optimizer_and_scheduler(args, model, t_total):
     ]
     if getattr(model, 'crf'):
         optimizer_grouped_parameters.append({
-            "params": model.crf.named_parameters,
-            "lr": args.crf_learning_rate
+            "params": [p for n, p in model.crf.named_parameters()],
+            "lr":
+            args.crf_learning_rate
         })
 
     optimizer = AdamW(
@@ -201,7 +202,7 @@ def train(args, train_dataset, model, tokenizer):
                 # NOTE: logging train loss for **every batch**, notice that we use
                 # gradient accumulation here.
                 tb_writer.add_scalar("Train/lr",
-                                     scheduler.get_lr()[0], global_step)
+                                     scheduler.get_last_lr()[0], global_step)
                 tb_writer.add_scalar("Train/loss", tr_loss - logging_loss,
                                      global_step)
                 logging_loss = tr_loss
@@ -210,7 +211,7 @@ def train(args, train_dataset, model, tokenizer):
                 if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     results = evaluate(args, model, tokenizer)
                     for key, value in results.items():
-                        tb_writer.add_scalar("Eval/{:.4f}".format(key), value,
+                        tb_writer.add_scalar("Eval/{}".format(key), value,
                                              global_step)
 
                 # NOTE: Save model
