@@ -9,7 +9,6 @@ import json
 import random
 import logging
 from collections import defaultdict
-import matplotlib.pyplot as plt
 from ner_crf.utils import utils_lic
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name

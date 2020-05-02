@@ -336,12 +336,11 @@ def load_and_cache_examples(args, tokenizer, mode='train'):
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features],
                                  dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features],
+    all_input_mask = torch.tensor([f.attention_mask for f in features],
                                   dtype=torch.long)
     all_token_type_ids = torch.tensor([f.token_type_ids for f in features],
                                       dtype=torch.long)
-    all_label_ids = torch.tensor([f.label_ids for f in features],
-                                 dtype=torch.long)
+    all_label_ids = torch.tensor([f.label for f in features], dtype=torch.long)
 
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_ids,
                             all_label_ids)

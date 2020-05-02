@@ -6,18 +6,26 @@ import logging
 from collections import namedtuple
 
 import torch
-from transformers.data.processors.utils import DataProcessor
-from ner_crf.utils import whitespace_tokenize
+from transformers.data.processors.utils import (
+    DataProcessor,
+    InputFeatures,
+    InputExample,
+)
+from transformers.tokenization_bert import whitespace_tokenize
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
-
-InputFeatures = namedtuple(
-    'InputFeatures',
-    ['input_ids', 'input_mask', 'token_type_ids', 'label_ids'])
 
 Example = namedtuple('Example', [
     "id", "text_a", "label", "ori_text", "ori_2_new_index", "roles", "sentence"
 ])
+
+
+def logging_examples(example, idx, idx_bound=5):
+    if idx >= idx_bound:
+        return
+    logger.info("******** example %d ********", idx)
+    for key, val in example._asdict().items():
+        logger.info('%s : %s', key, val)
 
 
 def collate_fn(batch):
@@ -113,9 +121,9 @@ def convert_examples_to_features(examples,
 
         feature = InputFeatures(
             input_ids=input_ids,
-            input_mask=input_mask,
+            attention_mask=input_mask,
             token_type_ids=token_type_ids,
-            label_ids=label_ids,
+            label=label_ids,
         )
         logging_examples(feature, ex_index)
         features.append(feature)
@@ -242,11 +250,3 @@ class CluenerProcessor(DataProcessor):
 
             examples.append(example)
         return examples
-
-
-def logging_examples(example, idx, idx_bound=5):
-    if idx >= idx_bound:
-        return
-    logger.info("******** example %d ********", idx)
-    for key, val in example._asdict().items():
-        logger.info('%s : %s', key, val)
