@@ -324,10 +324,8 @@ def span_convert_example_to_features(
 
 def get_labels(path: str) -> List[str]:
     if path:
-        with open(path, "r") as f:
-            labels = f.read().splitlines()
-        if "O" not in labels:
-            labels = ["O"] + labels
+        with open(path, "r") as f_obj:
+            labels = f_obj.read().splitlines()
         return labels
     else:
         return [
