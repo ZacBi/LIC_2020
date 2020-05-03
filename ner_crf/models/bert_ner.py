@@ -1,5 +1,6 @@
+
+import torch
 from torch import nn
-import torch.nn.functional as F
 from transformers import BertPreTrainedModel
 from transformers import BertModel
 from ner_crf.models.crf import CRF
@@ -41,7 +42,7 @@ class BertCRF(BertPreTrainedModel):
 class BertSpan(BertPreTrainedModel):
     # TODO: add decision boundary for model.
     def __init__(self, config, num_role):
-        super(BertSpan, self).__init__()
+        super(BertSpan, self).__init__(config)
         self.num_role = num_role
         self.model = BertModel(config)
         # Full-connect layer for start.
@@ -53,12 +54,11 @@ class BertSpan(BertPreTrainedModel):
         self.init_weights()
 
     def forward(
-        self,
-        input_ids,
-        token_type_ids=None,
-        attention_mask=None,
-        start_labels=None,
-        end_labels=None,
+            self,
+            input_ids,
+            token_type_ids=None,
+            attention_mask=None,
+            labels=None,
     ):
         outputs = self.bert(input_ids, token_type_ids, attention_mask)
         sequence_output = outputs[0]
@@ -69,45 +69,42 @@ class BertSpan(BertPreTrainedModel):
         # Note that
         start_logits = self.start_classifier(sequence_output)
         end_logits = self.end_classifier(sequence_output)
-        role_span_lists = self._arg_span_determine(
-            start_logits,
-            end_logits,
-            attention_mask,
-        )
-        outputs = (role_span_lists, )
-        if start_labels is not None and end_labels is not None:
-            loss_start = self.criterion(start_logits, start_labels)
-            loss_end = self.criterion(end_logits, end_labels)
+        # (2, batch_size, seq_len, num_role) -> (batch_size, 2, seq_len, num_role)
+        logits = torch.stack(start_logits, end_logits).transpose(0, 1)
+        outputs = (logits, )
+        if labels:
+            start_labels_seq, end_labels_seq = labels
+            loss_start = self.criterion(start_logits, start_labels_seq)
+            loss_end = self.criterion(end_logits, end_labels_seq)
             outputs = (loss_start + loss_end, ) + outputs
         return outputs
 
-    def _arg_span_determine(
-        self,
-        start_logits,
-        end_logits,
-        attention_masks,
-        boundary=0.5,
+    def arg_span_determine(
+            self,
+            start_probs,
+            end_probs,
+            last_valid_idx,
+            boundary=0.5,
     ):
         "Reference: section 3.3 Argument Span Determination"
         # The idx of '[SEP]' in each batch.
-        # role_span_list: (batch_size, num_role, num_span)
-        batch_size, _ = attention_masks.shape
+        # role_span_list: (batch_size, num_role, 2)
+        batch_size, _, num_role = start_probs.shape
         role_span_lists = [[[] for _ in range(self.num_role)]
                            for _ in range(batch_size)]
-        last_valid_idx = attention_masks.int().sum(1) - 1
 
-        # (batch_size, seq_len, num_roles)
-        p_role_start = start_logits.sigmoid()
-        p_role_end = end_logits.sigmoid()
-
+        p_role_start = start_probs
+        p_role_end = end_probs
         # TODO: refactor in matrix form
+        # Algorithm 1 in paper
         for b_idx in range(batch_size):
-            for role in range(self.num_role):
+            for role in range(num_role):
                 state, a_s, a_e = 1, -1, -1
                 prob_start = p_role_start[b_idx][role]
                 prob_end = p_role_end[b_idx][role]
                 # Code below is an automaton.
-                for seq_idx in range(last_valid_idx[b_idx]):
+                # Do not include `[cls]` and `[sep]`
+                for seq_idx in range(1, last_valid_idx[b_idx]):
                     if  prob_start[seq_idx] > boundary \
                             and state == 1:
                         a_s, state = seq_idx, 2
@@ -127,5 +124,14 @@ class BertSpan(BertPreTrainedModel):
                         if prob_start[seq_idx] > boundary and seq_idx != a_s:
                             role_span_lists[b_idx][role].append([a_s, a_e])
                             state, a_s, a_e = 2, seq_idx, -1
+
+                # if role has more than one argument, choose the span with highest score.
+                num_role_spans = len(role_span_lists[b_idx][role])
+                if num_role_spans:
+                    role_span_lists[b_idx][role] = sorted(
+                        role_span_lists[b_idx][role],
+                        key=lambda s, p1=prob_start, p2=prob_end: p1[s[0]] + p2[s[1]],
+                        reverse=True,
+                    )[0]
 
         return role_span_lists

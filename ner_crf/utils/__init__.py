@@ -12,4 +12,9 @@ from ner_crf.utils.arguments import (
     TrainingArguments,
 )
 
-from ner_crf.utils.utils_ner import NerDataset, Split, get_labels
+from ner_crf.utils.utils_ner import (
+    SpanDataset,
+    SpanDataController,
+    Split,
+    get_labels,
+)

@@ -1,29 +1,25 @@
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import numpy as np
-from seqeval.metrics import f1_score, precision_score, recall_score
-from torch import nn
 
 from transformers import (
     AutoConfig,
-    AutoModelForTokenClassification,
     AutoTokenizer,
-    EvalPrediction,
     HfArgumentParser,
-    Trainer,
     set_seed,
 )
 
 from ner_crf.models import BertCRF, BertSpan
+from ner_crf.processors import Trainer, EvalPrediction
 from ner_crf.utils import (
-    ModelArguments,
     DataTrainingArguments,
-    TrainingArguments,
-    NerDataset,
+    ModelArguments,
+    SpanDataset,
+    SpanDataController,
     Split,
+    TrainingArguments,
     get_labels,
 )
 
@@ -45,8 +41,8 @@ def main():
             and os.listdir(training_args.output_dir) and training_args.do_train
             and not training_args.overwrite_output_dir):
         raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
-        )
+            f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+            "Use --overwrite_output_dir to overcome.")
 
     # Setup logging
     logging.basicConfig(
@@ -68,7 +64,7 @@ def main():
     # Set seed
     set_seed(training_args.seed)
 
-    # Prepare CONLL-2003 task
+    # Prepare for task
     labels = get_labels(data_args.labels)
     id2label: Dict[int, str] = {i: label for i, label in enumerate(labels)}
     label2id: Dict[str, int] = {label: i for i, label in enumerate(labels)}
@@ -98,58 +94,82 @@ def main():
     )
 
     # Get datasets
-    train_dataset = (NerDataset(
+    train_dataset = (SpanDataset(
         data_dir=data_args.data_dir,
         tokenizer=tokenizer,
-        labels=labels,
-        model_type=config.model_type,
+        label2id=label2id,
         max_seq_length=data_args.max_seq_length,
         overwrite_cache=data_args.overwrite_cache,
         mode=Split.train,
         local_rank=training_args.local_rank,
     ) if training_args.do_train else None)
 
-    eval_dataset = (NerDataset(
+    eval_dataset = (SpanDataset(
         data_dir=data_args.data_dir,
         tokenizer=tokenizer,
-        labels=labels,
-        model_type=config.model_type,
+        label2id=label2id,
         max_seq_length=data_args.max_seq_length,
         overwrite_cache=data_args.overwrite_cache,
         mode=Split.dev,
         local_rank=training_args.local_rank,
     ) if training_args.do_eval else None)
 
-    def align_predictions(predictions: np.ndarray, label_ids: np.ndarray
-                          ) -> Tuple[List[int], List[int]]:
-        preds = np.argmax(predictions, axis=2)
+    def calculate_precision_recall_f1(num_label, num_infer, num_correct):
+        """calculate_f1"""
+        if num_infer == 0:
+            precision = 0.0
+        else:
+            precision = num_correct * 1.0 / num_infer
 
-        batch_size, seq_len = preds.shape
+        if num_label == 0:
+            recall = 0.0
+        else:
+            recall = num_correct * 1.0 / num_label
 
-        out_label_list = [[] for _ in range(batch_size)]
-        preds_list = [[] for _ in range(batch_size)]
+        if num_correct == 0:
+            f1_score = 0.0
+        else:
+            f1_score = 2 * precision * recall / (precision + recall)
+        return precision, recall, f1_score
 
-        for i in range(batch_size):
-            for j in range(seq_len):
-                if label_ids[i, j] != nn.CrossEntropyLoss().ignore_index:
-                    out_label_list[i].append(id2label[label_ids[i][j]])
-                    preds_list[i].append(id2label[preds[i][j]])
+    def compute_metrics(p: EvalPrediction) -> Dict:  # pylint: disable=invalid-name
+        """Here we compute `wordpiece level` precision, recall and f1"""
+        sigmoid = lambda x: 1 / (1 + np.exp(-x))
+        pred_start_probs = sigmoid(p.predictions)[:, 0]
+        pred_end_probs = sigmoid(p.predictions)[:, 1]
+        pred_role_span_lists = model.arg_span_determine(
+            pred_start_probs, pred_end_probs, p.last_valid_indices)
+        true_role_span_lists = model.arg_span_determine(
+            p.label_ids[:, 0], p.label_ids[:, 1], p.last_valid_indices)
 
-        return preds_list, out_label_list
+        common = pred = annotate = 0
+        for pred_span, true_span in zip(pred_role_span_lists,
+                                        true_role_span_lists):
+            _len = lambda span: span[1] - span[0] + 1 if span else 0
+            pred += _len(pred_span)
+            annotate += _len(true_span)
+            if all(
+                    pred_span,
+                    true_span,
+                    max(pred_span[0], true_span[0]) <= min(
+                        pred_span[1], true_span[1]),
+            ):
+                common += min(pred_span[1], true_span[1]) - max(
+                    pred_span[0], true_span[0]) + 1
 
-    def compute_metrics(p: EvalPrediction) -> Dict:
-        preds_list, out_label_list = align_predictions(p.predictions,
-                                                       p.label_ids)
+        precision, recall, f1_score = calculate_precision_recall_f1(
+            annotate, pred, annotate)
         return {
-            "precision": precision_score(out_label_list, preds_list),
-            "recall": recall_score(out_label_list, preds_list),
-            "f1": f1_score(out_label_list, preds_list),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1_score,
         }
 
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
+        data_collator=SpanDataController,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_metrics=compute_metrics,
@@ -183,48 +203,47 @@ def main():
             results.update(result)
 
     # Predict
-    if training_args.do_predict and training_args.local_rank in [-1, 0]:
-        test_dataset = NerDataset(
-            data_dir=data_args.data_dir,
-            tokenizer=tokenizer,
-            labels=labels,
-            model_type=config.model_type,
-            max_seq_length=data_args.max_seq_length,
-            overwrite_cache=data_args.overwrite_cache,
-            mode=Split.test,
-            local_rank=training_args.local_rank,
-        )
+    # if training_args.do_predict and training_args.local_rank in [-1, 0]:
+    #     test_dataset = SpanDataset(
+    #         data_dir=data_args.data_dir,
+    #         tokenizer=tokenizer,
+    #         label2id=label2id,
+    #         max_seq_length=data_args.max_seq_length,
+    #         overwrite_cache=data_args.overwrite_cache,
+    #         mode=Split.test,
+    #         local_rank=training_args.local_rank,
+    #     )
 
-        predictions, label_ids, metrics = trainer.predict(test_dataset)
-        preds_list, _ = align_predictions(predictions, label_ids)
+    #     predictions, label_ids, metrics = trainer.predict(test_dataset)
+    #     preds_list, _ = align_predictions(predictions, label_ids)
 
-        output_test_results_file = os.path.join(training_args.output_dir,
-                                                "test_results.txt")
-        with open(output_test_results_file, "w") as writer:
-            for key, value in metrics.items():
-                logger.info("  %s = %s", key, value)
-                writer.write("%s = %s\n" % (key, value))
+    #     output_test_results_file = os.path.join(training_args.output_dir,
+    #                                             "test_results.txt")
+    #     with open(output_test_results_file, "w") as writer:
+    #         for key, value in metrics.items():
+    #             logger.info("  %s = %s", key, value)
+    #             writer.write("%s = %s\n" % (key, value))
 
-        # Save predictions
-        output_test_predictions_file = os.path.join(training_args.output_dir,
-                                                    "test_predictions.txt")
-        with open(output_test_predictions_file, "w") as writer:
-            with open(os.path.join(data_args.data_dir, "test.txt"), "r") as f:
-                example_id = 0
-                for line in f:
-                    if line.startswith(
-                            "-DOCSTART-") or line == "" or line == "\n":
-                        writer.write(line)
-                        if not preds_list[example_id]:
-                            example_id += 1
-                    elif preds_list[example_id]:
-                        output_line = line.split(
-                        )[0] + " " + preds_list[example_id].pop(0) + "\n"
-                        writer.write(output_line)
-                    else:
-                        logger.warning(
-                            "Maximum sequence length exceeded: No prediction for '%s'.",
-                            line.split()[0])
+    #     # Save predictions
+    #     output_test_predictions_file = os.path.join(training_args.output_dir,
+    #                                                 "test_predictions.txt")
+    #     with open(output_test_predictions_file, "w") as writer:
+    #         with open(os.path.join(data_args.data_dir, "test.txt"), "r") as f:
+    #             example_id = 0
+    #             for line in f:
+    #                 if line.startswith(
+    #                         "-DOCSTART-") or line == "" or line == "\n":
+    #                     writer.write(line)
+    #                     if not preds_list[example_id]:
+    #                         example_id += 1
+    #                 elif preds_list[example_id]:
+    #                     output_line = line.split(
+    #                     )[0] + " " + preds_list[example_id].pop(0) + "\n"
+    #                     writer.write(output_line)
+    #                 else:
+    #                     logger.warning(
+    #                         "Maximum sequence length exceeded: No prediction for '%s'.",
+    #                         line.split()[0])
 
     return results
 

@@ -141,10 +141,23 @@ def statistic():
     event_type_num_dist = defaultdict(int)
     match_dist = {'match': 0, 'not_match': 0}
     loose_match_dist = {'match': 0, 'not_match': 0}
+    seq_len_dist = {126: 0, 254: 0, 382: 0, 510: 0}
+
     lines = utils_lic.read_by_lines(fpath)
     for line in lines:
         sent_count += 1
         j_obj = json.loads(line)
+
+        len_text = len(" ".join(j_obj['text'].strip().split()))
+        if len_text < 126:
+            seq_len_dist[126] += 1
+        elif len_text < 254:
+            seq_len_dist[254] += 1
+        elif len_text < 382:
+            seq_len_dist[382] += 1
+        else:
+            seq_len_dist[510] += 1
+
         # Distribution of the num of event per sentence
         event_list_len_dist[len(j_obj['event_list'])] += 1
         for event in j_obj['event_list']:
@@ -190,6 +203,7 @@ def statistic():
     res = {
         'sent_count': sent_count,
         'event_count': event_count,
+        'max_seq_len': seq_len_dist,
         'event_list_len': dict(event_list_len_dist),
         'event_type_num': dict(event_type_num_dist),
         'event_class_num': dict(event_class_num_dist),
@@ -200,7 +214,11 @@ def statistic():
         'empty_argument_ids': list(set(empty_argument_ids)),
     }
     dirname = os.path.dirname(fpath)
-    with open(os.path.join(dirname, 'train_dist.json'), 'w') as f_obj:
+    basename = os.path.basename(fpath)
+    with open(
+            os.path.join(dirname,
+                         '{}_dist.json'.format(basename.split('.')[0])),
+            'w') as f_obj:
         f_obj.write(json.dumps(res, ensure_ascii=False))
 
 
