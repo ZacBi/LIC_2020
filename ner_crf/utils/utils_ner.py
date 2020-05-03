@@ -49,8 +49,8 @@ class SpanInputFeatures:
     attention_mask: List[int]
     token_type_ids: List[int]
     tok_to_orig_indices: List[int]
-    start_labels_seq: tuple[List[List[int]]] = None
-    end_labels_seq: tuple[List[List[int]]] = None
+    start_labels_seq: List[List[int]] = None
+    end_labels_seq: List[List[int]] = None
 
 
 class Split(Enum):
@@ -116,7 +116,7 @@ def span_read_examples_from_file(data_dir, mode: Union[Split, str]
 
     examples = []
     with open(file_path, encoding="utf-8") as f_obj:
-        for idx, line in enumerate(f_obj):
+        for _, line in enumerate(f_obj):
             json_obj = json.loads(line.strip())
             event_id = json_obj["event_id"]
             text = json_obj["text"]
@@ -146,7 +146,7 @@ def span_read_examples_from_file(data_dir, mode: Union[Split, str]
             char_to_word_indices = []
             prev_is_whitespace = True
             # Seperate word by whitespace
-            for i, char in enumerate(text):
+            for _, char in enumerate(text):
                 # Remove the influence of whitespace
                 if _is_whitespace(char):
                     prev_is_whitespace = True
@@ -251,6 +251,7 @@ def span_convert_example_to_features(
             tok_end = orig_to_tok_indices[word_end + 1] - 1
         else:
             tok_end = len(all_doc_tokens) - 1
+        return tok_start, tok_end
 
     c2w_indices = example.char_2_word_indices
     start_positions, end_positions = None, None
@@ -346,8 +347,9 @@ class SpanDataController(DefaultDataCollator):
     i.e., Property names of the input object will be used as corresponding inputs to the model.
     See glue and ner for example of how it's useful.
     """
-    def collate_batch(self, features: List[InputDataClass]
+    def collate_batch(self, features: List[SpanInputFeatures]
                       ) -> Dict[str, torch.Tensor]:
+        # pylint: disable=not-callable
         # In this method we'll make the assumption that all `features` in the batch
         # have the same attributes.
         # So we will look at the first element as a proxy for what attributes exist
@@ -357,7 +359,7 @@ class SpanDataController(DefaultDataCollator):
         # Special handling for labels.
         # Ensure that tensor is created with the correct type
         # (it should be automatically the case, but let's make sure of it.)
-        if all(hasattr(first,"start_labels_seq"), hasattr(first,"end_labels_seq")) \
+        if all(hasattr(first, "start_labels_seq"), hasattr(first, "end_labels_seq")) \
                 and all(first.start_labels_seq, first.end_labels_seq):
             start_labels_seq = torch.tensor(
                 [f.start_labels_seq for f in features], dtype=torch.float)

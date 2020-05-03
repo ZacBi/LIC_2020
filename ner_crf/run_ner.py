@@ -8,6 +8,7 @@ from transformers import (
     AutoConfig,
     AutoTokenizer,
     HfArgumentParser,
+    TrainingArguments,
     set_seed,
 )
 
@@ -19,7 +20,6 @@ from ner_crf.utils import (
     SpanDataset,
     SpanDataController,
     Split,
-    TrainingArguments,
     get_labels,
 )
 
@@ -66,8 +66,8 @@ def main():
 
     # Prepare for task
     labels = get_labels(data_args.labels)
-    id2label: Dict[int, str] = {i: label for i, label in enumerate(labels)}
-    label2id: Dict[str, int] = {label: i for i, label in enumerate(labels)}
+    id2label = {i: label for i, label in enumerate(labels)}
+    label2id = {label: i for i, label in enumerate(labels)}
     num_labels = len(labels)
 
     # Load pretrained model and tokenizer

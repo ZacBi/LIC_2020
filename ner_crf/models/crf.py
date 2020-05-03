@@ -95,9 +95,10 @@ class CRF(nn.Module):
             # Transition score
             t_score = torch.sum(self.transitions[left_side, right_side])
             # Don't calculate the emission score for '[CLS]' and '[SEP]'
-            e_score = torch.sum(emissions[batch_idx,
-                                          torch.arange(1, last_idx),
-                                          tags[batch_idx, 1:last_idx]])
+            e_score = torch.sum(
+                emissions[batch_idx,
+                          torch.arange(1, last_idx
+                                       ), tags[batch_idx, 1:last_idx]])
 
             score = t_score + e_score
             scores.append(score.unsqueeze(0))

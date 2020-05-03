@@ -1,4 +1,3 @@
-
 import torch
 from torch import nn
 from transformers import BertPreTrainedModel
@@ -130,7 +129,8 @@ class BertSpan(BertPreTrainedModel):
                 if num_role_spans:
                     role_span_lists[b_idx][role] = sorted(
                         role_span_lists[b_idx][role],
-                        key=lambda s, p1=prob_start, p2=prob_end: p1[s[0]] + p2[s[1]],
+                        key=lambda s, p1=prob_start, p2=prob_end: p1[s[0]] +
+                        p2[s[1]],
                         reverse=True,
                     )[0]
 
