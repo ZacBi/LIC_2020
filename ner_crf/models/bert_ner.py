@@ -40,14 +40,15 @@ class BertCRF(BertPreTrainedModel):
 # reference: <<Exploring Pre-trained Language Models for Event Extraction and Generation>>
 class BertSpan(BertPreTrainedModel):
     # TODO: add decision boundary for model.
-    def __init__(self, config, num_role):
+    def __init__(self, config):
         super(BertSpan, self).__init__(config)
-        self.num_role = num_role
         self.model = BertModel(config)
         # Full-connect layer for start.
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.start_classifier = self.linear(config.hidden_size, num_role)
-        self.end_classifier = self.linear(config.hidden_size, num_role)
+        self.start_classifier = self.linear(config.hidden_size,
+                                            config.num_labels)
+        self.end_classifier = self.linear(config.hidden_size,
+                                          config.num_labels)
         # TODO: re-weight loss for roles in section 3.4
         self.criterion = nn.BCEWithLogitsLoss()
         self.init_weights()
