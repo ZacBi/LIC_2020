@@ -349,9 +349,8 @@ class Trainer:
 
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
                         # last step in epoch but step is always smaller than gradient_accumulation_steps
-                        len(epoch_iterator) <=
-                        self.args.gradient_accumulation_steps and
-                    (step + 1) == len(epoch_iterator)):
+                        len(epoch_iterator) <= self.args.gradient_accumulation_steps \
+                        and (step + 1) == len(epoch_iterator)):
                     if self.args.fp16:
                         torch.nn.utils.clip_grad_norm_(
                             amp.master_params(optimizer),
@@ -366,10 +365,10 @@ class Trainer:
                     global_step += 1
 
                     if self.args.local_rank in [-1, 0]:
-                        if (self.args.logging_steps > 0
-                                and global_step % self.args.logging_steps == 0
-                            ) or (global_step == 1
-                                  and self.args.logging_first_step):
+                        if  self.args.logging_steps > 0 \
+                                and global_step % self.args.logging_steps == 0 \
+                                or global_step == 1 \
+                                and self.args.logging_first_step:
                             logs = {}
                             if self.args.evaluate_during_training:
                                 results = self.evaluate()

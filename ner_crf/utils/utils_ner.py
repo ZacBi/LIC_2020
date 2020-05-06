@@ -27,8 +27,8 @@ from torch import nn
 from torch.utils.data.dataset import Dataset
 
 from transformers import PreTrainedTokenizer, torch_distributed_zero_first
-from transformers.tokenization_bert import whitespace_tokenize, _is_whitespace
 from transformers.data.data_collator import DefaultDataCollator
+from transformers.tokenization_bert import _is_whitespace
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,9 @@ logger = logging.getLogger(__name__)
 class SpanInputExample():
     event_id: str
     text: str
-    words: List[str]
-    char_to_word_indices: List[int]
     roles: List[Dict]
     trigger: Dict
+    sent_ori_2_new: Dict[int]
 
 
 @dataclass
@@ -48,9 +47,10 @@ class SpanInputFeatures:
     input_ids: List[int]
     attention_mask: List[int]
     token_type_ids: List[int]
-    tok_to_orig_indices: List[int]
     start_labels_seq: List[List[int]] = None
     end_labels_seq: List[List[int]] = None
+    tok_to_new: List[List[int]]
+    new_to_tok: List[int]
 
 
 class Split(Enum):
@@ -84,21 +84,20 @@ class SpanDataset(Dataset):
             # and the others will use the cache.
 
             if os.path.exists(cached_features_file) and not overwrite_cache:
-                logger.info(
-                    f"Loading features from cached file {cached_features_file}"
-                )
+                logger.info("Loading features from cached file %s",
+                            cached_features_file)
                 self.features = torch.load(cached_features_file)
             else:
-                logger.info(
-                    f"Creating features from dataset file at {data_dir}")
+                logger.info("Creating features from dataset file at %s",
+                            data_dir)
                 examples = span_read_examples_from_file(data_dir, mode)
+                logger.info("Number of examples: %s", len(examples))
                 # TODO clean up all this to leverage built-in features of tokenizers
                 self.features = span_convert_examples_to_features(
                     examples, label2id, max_seq_length, tokenizer, mode)
                 if local_rank in [-1, 0]:
-                    logger.info(
-                        f"Saving features into cached file {cached_features_file}"
-                    )
+                    logger.info("Saving features into cached file %s",
+                                cached_features_file)
                     torch.save(self.features, cached_features_file)
 
     def __len__(self):
@@ -106,6 +105,84 @@ class SpanDataset(Dataset):
 
     def __getitem__(self, i) -> SpanInputFeatures:
         return self.features[i]
+
+
+def str_full_to_width(ustring):
+    """把字符串全角转半角"""
+    ss = []
+    for s in ustring:
+        rstring = ""
+        for uchar in s:
+            inside_code = ord(uchar)
+            if inside_code == 12288:  # 全角空格直接转换
+                inside_code = 32
+            elif (inside_code >= 65281
+                  and inside_code <= 65374):  # 全角字符（除空格）根据关系转化
+                inside_code -= 65248
+            rstring += chr(inside_code)
+        ss.append(rstring)
+    return ''.join(ss)
+
+
+def process_sent_ori_2_new(text, roles_list, trigger):
+    """process_sent_ori_2_new"""
+    words = list(text)
+    sent_ori_2_new_index = {}
+    new_words = []
+    new_roles_list = {}
+    for role_type, role in roles_list.items():
+        new_roles_list[role_type] = {
+            "role_type": role_type,
+            "start": -1,
+            "end": -1
+        }
+    new_trigger = {
+        "trigger": trigger['trigger'],
+        'start': trigger['start'],
+        'end': trigger['end']
+    }
+
+    for i, w in enumerate(words):
+        for role_type, role in roles_list.items():
+            if i == role["start"]:
+                new_roles_list[role_type]["start"] = len(new_words)
+            if i == role["end"]:
+                new_roles_list[role_type]["end"] = len(new_words)
+        # Trigger
+        if i == trigger['start']:
+            new_trigger['start'] = len(new_words)
+        if i == trigger['end']:
+            new_trigger['end'] = len(new_words)
+
+        if not w.strip():
+            sent_ori_2_new_index[i] = -1
+            for role_type, role in roles_list.items():
+                if i == role["start"]:
+                    new_roles_list[role_type]["start"] += 1
+                if i == role["end"]:
+                    new_roles_list[role_type]["end"] -= 1
+            # Trigger
+            if i == trigger['start']:
+                new_trigger['start'] += 1
+            if i == trigger['end']:
+                new_trigger['end'] -= 1
+        else:
+            sent_ori_2_new_index[i] = len(new_words)
+            new_words.append(w)
+
+    for role_type, role in new_roles_list.items():
+        if role["start"] > -1:
+            role["text"] = u"".join(new_words[role["start"]:role["end"] + 1])
+        if role["end"] == len(new_words):
+            role["end"] = len(new_words) - 1
+
+    if new_trigger['start'] > -1:
+        new_trigger['start'] = u"".join(
+            new_words[new_trigger["start"]:new_trigger["end"] + 1])
+    if new_trigger['end'] == len(new_words):
+        new_trigger['end'] = len(new_words) - 1
+
+    return new_words, sent_ori_2_new_index, new_roles_list, new_trigger
 
 
 def span_read_examples_from_file(data_dir, mode: Union[Split, str]
@@ -117,6 +194,7 @@ def span_read_examples_from_file(data_dir, mode: Union[Split, str]
     examples = []
     with open(file_path, encoding="utf-8") as f_obj:
         for _, line in enumerate(f_obj):
+            line = str_full_to_width(line)
             json_obj = json.loads(line.strip())
             event_id = json_obj["event_id"]
             text = json_obj["text"]
@@ -137,78 +215,60 @@ def span_read_examples_from_file(data_dir, mode: Union[Split, str]
 
             # Trigger
             trigger = {
-                "trigger": json_obj['trigger'],
-                "start": json_obj["trigger_start_index"],
-                "end": json_obj["trigger_start_index"] + len(trigger) - 1
+                "trigger":
+                json_obj['trigger'],
+                "start":
+                json_obj["trigger_start_index"],
+                "end":
+                json_obj["trigger_start_index"] + len(json_obj['trigger']) - 1
             }
+            (
+                new_words,
+                sent_ori_2_new,
+                new_role_list,
+                new_trigger,
+            ) = process_sent_ori_2_new(text, roles_list, trigger)
 
-            words = []
-            char_to_word_indices = []
-            prev_is_whitespace = True
-            # Seperate word by whitespace
-            for _, char in enumerate(text):
-                # Remove the influence of whitespace
-                if _is_whitespace(char):
-                    prev_is_whitespace = True
-                else:
-                    if prev_is_whitespace:
-                        words.append(char)
-                        prev_is_whitespace = False
-                    else:
-                        words[-1].append(char)
-                char_to_word_indices.append(len(words) - 1)
-
-                examples.append(
-                    SpanInputExample(
-                        event_id=event_id,
-                        text=text,
-                        words=words,
-                        char_to_word_indices=char_to_word_indices,
-                        roles=roles_list,
-                        trigger=trigger,
-                    ))
+            examples.append(
+                SpanInputExample(
+                    event_id=event_id,
+                    text=u"".join(new_words),
+                    roles=new_role_list,
+                    trigger=new_trigger,
+                    sent_ori_2_new=sent_ori_2_new,
+                ))
 
     return examples
 
 
-def span_convert_examples_to_features(
-        examples: List[SpanInputExample],
-        label2id: Dict[str, int],
-        max_seq_length: int,
-        tokenizer: PreTrainedTokenizer,
-        mode: Union[Split, str],
-) -> List[SpanInputFeatures]:
-    """ Loads a data file into a list of `SpanInputFeatures`
-        `cls_token_at_end` define the location of the CLS token:
-            - False (Default, BERT/XLM pattern): [CLS] + A + [SEP] + B + [SEP]
-            - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
-        `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
-    """
-    # TODO clean up all this to leverage built-in features of tokenizers
+def _stem(token):
+    if token[:2] == '##':
+        return token[2:]
+    else:
+        return token
 
-    features = []
-    for ex_index, example in enumerate(examples):
-        if ex_index % 10_000 == 0:
-            logger.info("Writing example %d of %d", ex_index, len(examples))
-        res = span_convert_example_to_features(example, label2id,
-                                               max_seq_length, tokenizer, mode)
-        if res is None:
-            continue
-        feature = res['feature']
-        features.append(feature)
 
-        if ex_index < 5:
-            logger.info("*** Example ***")
-            logger.info("event_id: %s", example.event_id)
-            logger.info("tokens: %s", " ".join(res['all_doc_tokens']))
-            logger.info("input_ids: %s", " ".join(feature.input_ids))
-            logger.info("input_mask: %s", " ".join(feature.attention_mask))
-            logger.info("segment_ids: %s", " ".join(feature.token_type_ids))
-            logger.info("start_positions: %s",
-                        " ".join(res['start_positions']))
-            logger.info("end_positions: %s", " ".join(res['end_positions']))
+def _is_special(token: str):
+    return bool(token) \
+            and token.startswith('[') \
+            and token.endswith(']')
 
-    return features
+
+def _get_mapping_from_new_and_tok(text, tokens):
+    new_to_tok, tok_to_new, offset = [], [], 0
+    for i, token in enumerate(tokens):
+        if _is_special(token):
+            tok_to_new.append([offset, offset])
+            new_to_tok.append(i)
+            offset += 1
+        else:
+            token = _stem(token)
+            start = text[offset:].index(token) + offset
+            end = start + len(token)
+            tok_to_new.append([start, end - 1])
+            new_to_tok.extend([i] * len(token))
+            offset = end
+    return new_to_tok, tok_to_new
 
 
 def span_convert_example_to_features(
@@ -218,56 +278,31 @@ def span_convert_example_to_features(
         tokenizer: PreTrainedTokenizer,
         mode: Union[Split, str],
 ) -> SpanInputFeatures:
+    assert not any(_is_whitespace(c) for c in example.text)
 
-    # Check if trigger or role in text
-    if mode == Split.train:
-        actual_text = " ".join(example.words)
-        trigger = " ".join(whitespace_tokenize(example.trigger['trigger']))
-        if actual_text.find(trigger) == -1:
-            logger.warning("Invalid data, id: %s, text: %s, argument: %s",
-                           example.event_id, actual_text, trigger)
-            return None
-        for role in example.roles:
-            argument = " ".join(whitespace_tokenize(role['argument']))
-            if actual_text.find(argument) == -1:
-                logger.warning("Invalid data, id: %s, text: %s, argument: %s",
-                               example.event_id, actual_text, argument)
-            return None
+    text = example.text
+    tokens = tokenizer.tokenize(text)
+    if tokenizer.do_lower_case:
+        text = text.lower()
+    new_to_tok, tok_to_new = _get_mapping_from_new_and_tok(text, tokens)
 
-    tok_to_orig_indices = []
-    orig_to_tok_indices = []
-    all_doc_tokens = []
-    for i, token in enumerate(example.words):
-        orig_to_tok_indices.append(len(all_doc_tokens))
-        for sub_token in tokenizer.tokenize(token):
-            tok_to_orig_indices.append(i)
-            all_doc_tokens.append(sub_token)
+    assert len(tok_to_new) == len(tokens)
+    assert len(new_to_tok) == len(text)
 
-    # Get token start and token end according to original start and end
-    def _get_token_start_and_end(start, end):
-        word_start, word_end = c2w_indices[start], c2w_indices[end]
-        tok_start = orig_to_tok_indices[word_start]
-        if word_end < len(example.words) - 1:
-            tok_end = orig_to_tok_indices[word_end + 1] - 1
-        else:
-            tok_end = len(all_doc_tokens) - 1
-        return tok_start, tok_end
-
-    c2w_indices = example.char_2_word_indices
     start_positions, end_positions = None, None
     if mode == Split.train:
-        start_positions = [[] for _ in all_doc_tokens]
-        end_positions = [[] for _ in all_doc_tokens]
+        start_positions = [[] for _ in tokens]
+        end_positions = [[] for _ in tokens]
 
-        for role in example.roles:
-            tok_start, tok_end = _get_token_start_and_end(
-                role['start'], role['end'])
+        for _, role in example.roles.items():
+            tok_start = new_to_tok[role['start']]
+            tok_end = new_to_tok[role['end']]
             start_positions[tok_start].append(label2id[role['role_type']])
             end_positions[tok_end].append(label2id[role['role_type']])
 
     # TODO: handle if trigger is out of boundary
     encode_dict = tokenizer.encode_plus(
-        text=all_doc_tokens,
+        text=tokens,
         max_length=max_seq_length,
         pad_to_max_length=True,
         return_token_type_id=True,
@@ -276,11 +311,11 @@ def span_convert_example_to_features(
 
     # As paper said:
     # "Therefore, we feed argument extractor with the segment ids of trigger tokens being one."
-    tok_trigger_start, tok_trigger_end = _get_token_start_and_end(
-        example.trigger['start'], example.trigger['end'])
+    tok_trigger_start = new_to_tok[example.trigger['start']]
+    tok_trigger_end = new_to_tok[example.trigger['end']]
     for idx in range(tok_trigger_start, tok_trigger_end + 1):
         # FIXME: use other method like attention to handle trigger out of boundary.
-        if idx > max_seq_length:
+        if idx >= max_seq_length:
             break
         encode_dict['token_type_ids'][idx] = 1
 
@@ -301,8 +336,7 @@ def span_convert_example_to_features(
 
     start_labels_seq = end_labels_seq = None
     if start_positions:
-        pad_idx = encode_dict['input_ids'].find(tokenizer.pad_token_id)
-        if pad_idx == -1:
+        if tokenizer.pad_token_id not in encode_dict['input_ids']:
             start_positions = start_positions[:tokenizer.
                                               max_len_single_sentence]
             end_positions = end_positions[:tokenizer.max_len_single_sentence]
@@ -311,16 +345,56 @@ def span_convert_example_to_features(
 
     encode_dict['start_labels_seq'] = start_labels_seq
     encode_dict['end_labels_seq'] = end_labels_seq
-    encode_dict['tok_to_orig_indices'] = tok_to_orig_indices
+    encode_dict['tok_to_new'] = tok_to_new
+    encode_dict['new_to_tok'] = new_to_tok
 
     res = {
         'feature': SpanInputFeatures(**encode_dict),
-        'all_doc_tokens': all_doc_tokens,
+        'all_doc_tokens': tokens,
         'start_positions': start_positions,
         'end_positions': end_positions
     }
 
     return res
+
+
+def span_convert_examples_to_features(
+        examples: List[SpanInputExample],
+        label2id: Dict[str, int],
+        max_seq_length: int,
+        tokenizer: PreTrainedTokenizer,
+        mode: Union[Split, str],
+) -> List[SpanInputFeatures]:
+    """ Loads a data file into a list of `SpanInputFeatures`
+        `cls_token_at_end` define the location of the CLS token:
+            - False (Default, BERT/XLM pattern): [CLS] + A + [SEP] + B + [SEP]
+            - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
+        `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
+    """
+    # TODO clean up all this to leverage built-in features of tokenizers
+
+    features = []
+    for ex_index, example in enumerate(examples):
+        if ex_index % 10000 == 0:
+            logger.info("Writing example %d of %d", ex_index, len(examples))
+        res = span_convert_example_to_features(example, label2id,
+                                               max_seq_length, tokenizer, mode)
+        feature = res['feature']
+        features.append(feature)
+
+        if ex_index < 5:
+            logger.info("*** Example ***")
+            logger.info("event_id: %s", example.event_id)
+            logger.info("trigger: %s", example.trigger)
+            logger.info("roles: %s", example.roles)
+            logger.info("tokens: %s", " ".join(res['all_doc_tokens']))
+            logger.info("input_ids: %s", str(feature.input_ids))
+            logger.info("input_mask: %s", str(feature.attention_mask))
+            logger.info("segment_ids: %s", str(feature.token_type_ids))
+            logger.info("start_positions: %s", str(res['start_positions']))
+            logger.info("end_positions: %s", str(res['end_positions']))
+
+    return features
 
 
 def get_labels(path: str) -> List[str]:
@@ -335,6 +409,7 @@ def get_labels(path: str) -> List[str]:
         ]
 
 
+@dataclass
 class SpanDataController(DefaultDataCollator):
     """
     Very simple data collator that:
@@ -371,9 +446,9 @@ class SpanDataController(DefaultDataCollator):
 
         # Handling of all other possible attributes.
         # Again, we will use the first element to figure out which key/values are not None for this model.
-        for k, v in vars(first).items():
-            if k not in ("start_labels_seq", "end_labels_seq", "tok_to_orig_indices") \
-                    and v is not None and not isinstance(v, str):
-                batch[k] = torch.tensor([getattr(f, k) for f in features],
-                                        dtype=torch.long)
+        for key, val in vars(first).items():
+            if key not in ("start_labels_seq", "end_labels_seq", "tok_to_orig_indices") \
+                    and val is not None and not isinstance(val, str):
+                batch[key] = torch.tensor([getattr(f, key) for f in features],
+                                          dtype=torch.long)
         return batch

@@ -45,10 +45,9 @@ class BertSpan(BertPreTrainedModel):
         self.model = BertModel(config)
         # Full-connect layer for start.
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.start_classifier = self.linear(config.hidden_size,
-                                            config.num_labels)
-        self.end_classifier = self.linear(config.hidden_size,
+        self.start_classifier = nn.Linear(config.hidden_size,
                                           config.num_labels)
+        self.end_classifier = nn.Linear(config.hidden_size, config.num_labels)
         # TODO: re-weight loss for roles in section 3.4
         self.criterion = nn.BCEWithLogitsLoss()
         self.init_weights()
